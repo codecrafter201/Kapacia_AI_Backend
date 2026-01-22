@@ -176,12 +176,26 @@ o.generateSoapNoteFromTranscript = async (req, res, next) => {
         );
       }
 
-      resolvedTranscript = transcriptDoc.editedText || transcriptDoc.rawText;
+      // Use masked version for AI processing if PII masking is enabled
+      if (transcriptDoc.piiMaskingEnabled && transcriptDoc.hasPii) {
+        resolvedTranscript = transcriptDoc.maskedEditedText || transcriptDoc.maskedText || transcriptDoc.editedText || transcriptDoc.rawText;
+        console.log(`[SoapController] Using PII-masked transcript for AI processing`);
+      } else {
+        resolvedTranscript = transcriptDoc.editedText || transcriptDoc.rawText;
+      }
     }
 
     if (!resolvedTranscript) {
       const transcriptDoc = await Transcript.findOne({ session: sessionId });
-      resolvedTranscript = transcriptDoc?.editedText || transcriptDoc?.rawText;
+      if (transcriptDoc) {
+        // Use masked version for AI processing if PII masking is enabled
+        if (transcriptDoc.piiMaskingEnabled && transcriptDoc.hasPii) {
+          resolvedTranscript = transcriptDoc.maskedEditedText || transcriptDoc.maskedText || transcriptDoc.editedText || transcriptDoc.rawText;
+          console.log(`[SoapController] Using PII-masked transcript for AI processing`);
+        } else {
+          resolvedTranscript = transcriptDoc.editedText || transcriptDoc.rawText;
+        }
+      }
     }
 
     if (!resolvedTranscript) {
@@ -192,8 +206,41 @@ o.generateSoapNoteFromTranscript = async (req, res, next) => {
       );
     }
 
+    // Apply additional PII masking if not already masked and session has PII masking enabled
+    let finalTranscriptForAI = resolvedTranscript;
+    let piiMaskingApplied = false;
+    let piiMaskingMetadata = null;
+
+    if (session.piiMaskingEnabled && !piiMasked) {
+      const PiiMaskingService = require("../../../Services/PiiMaskingService");
+      const piiMaskingService = new PiiMaskingService();
+      
+      const maskingResult = piiMaskingService.maskPii(resolvedTranscript, {
+        maskNames: true,
+        maskNric: true,
+        maskPhone: true,
+        maskEmail: true,
+        maskDates: false, // Keep dates for medical context
+        maskAddresses: true,
+        maskMedicalIds: true,
+        maskFinancial: true,
+        preserveLength: false
+      });
+
+      if (maskingResult.metadata.maskingApplied) {
+        finalTranscriptForAI = maskingResult.maskedText;
+        piiMaskingApplied = true;
+        piiMaskingMetadata = maskingResult.metadata;
+        
+        console.log(`[SoapController] Additional PII masking applied before AI processing:`, {
+          entitiesCount: maskingResult.metadata.totalEntitiesMasked,
+          entitiesByType: maskingResult.metadata.entitiesByType
+        });
+      }
+    }
+
     const aiResult = await bedrockService.generateSoapNoteFromTranscript({
-      transcriptText: resolvedTranscript,
+      transcriptText: finalTranscriptForAI,
       framework,
       temperature: temperature !== undefined ? temperature : 0.2,
       maxTokens: maxTokens !== undefined ? maxTokens : 1200,
@@ -210,10 +257,36 @@ o.generateSoapNoteFromTranscript = async (req, res, next) => {
       contentText: aiResult.contentText,
       generatedBy: "AI",
       aiModelVersion: aiResult.modelId,
-      piiMasked:
-        piiMasked !== undefined ? piiMasked : session.piiMaskingEnabled,
-      maskingMetadata,
+      piiMasked: piiMaskingApplied || (piiMasked !== undefined ? piiMasked : session.piiMaskingEnabled),
+      maskingMetadata: piiMaskingMetadata || maskingMetadata,
     });
+
+    // Create audit log for SOAP generation with PII masking
+    if (piiMaskingApplied || session.piiMaskingEnabled) {
+      const PiiAuditLog = require("../../../Models/PiiAuditLog");
+      await new (mongoose.model("PiiAuditLog"))({
+        session: sessionId,
+        user: userId,
+        action: "soap_generated",
+        entityType: "soap_note",
+        entityId: soapNote._id,
+        piiEntitiesCount: piiMaskingMetadata?.totalEntitiesMasked || 0,
+        piiEntitiesByType: piiMaskingMetadata?.entitiesByType || {},
+        maskingOptions: {
+          maskNames: true,
+          maskNric: true,
+          maskPhone: true,
+          maskEmail: true,
+          maskDates: false,
+          maskAddresses: true,
+          maskMedicalIds: true,
+          maskFinancial: true
+        },
+        userAgent: req.get('User-Agent'),
+        ipAddress: req.ip,
+        details: `SOAP note generated from ${piiMaskingApplied ? 'PII-masked' : 'original'} transcript`
+      }).save();
+    }
 
     return json.successResponse(
       res,

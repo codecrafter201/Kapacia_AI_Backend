@@ -182,6 +182,16 @@ app.group("/transcript", (Route) => {
     authCtrl.authenticate,
     transcriptCtrl.getTranscriptBySession,
   );
+  Route.get(
+    "/session/:sessionId/pii-audit",
+    authCtrl.authenticate,
+    transcriptCtrl.getPiiAuditLogs,
+  );
+  Route.get(
+    "/session/:sessionId/pii-statistics",
+    authCtrl.authenticate,
+    transcriptCtrl.getPiiStatistics,
+  );
   Route.get("/:id", authCtrl.authenticate, transcriptCtrl.getTranscriptById);
   Route.put("/:id", authCtrl.authenticate, transcriptCtrl.updateTranscript);
   Route.delete("/:id", authCtrl.authenticate, transcriptCtrl.deleteTranscript);

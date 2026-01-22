@@ -5,10 +5,12 @@ const {
   StartStreamTranscriptionCommand,
 } = require("@aws-sdk/client-transcribe-streaming");
 const { PassThrough } = require("stream");
+const PiiMaskingService = require("./PiiMaskingService");
+const mongoose = require("mongoose");
 
 /**
  * AWS Transcribe Streaming Service
- * Handles real-time audio transcription using AWS Transcribe
+ * Handles real-time audio transcription using AWS Transcribe with PII masking
  */
 class TranscriptionService {
   constructor() {
@@ -27,6 +29,7 @@ class TranscriptionService {
       },
     });
 
+    this.piiMaskingService = new PiiMaskingService();
     this.sessions = new Map();
     console.log(
       `[TranscriptionService] Initialized with region: ${process.env.AWS_REGION || "us-east-1"}`,
@@ -39,6 +42,13 @@ class TranscriptionService {
   async startTranscription(sessionId, socket, options = {}) {
     try {
       console.log(`[${sessionId}] Starting transcription session`);
+
+      // Get session data to check PII masking settings
+      const Session = mongoose.model("Session");
+      const sessionData = await Session.findById(sessionId);
+      const piiMaskingEnabled = sessionData?.piiMaskingEnabled !== false;
+
+      console.log(`[${sessionId}] PII masking enabled: ${piiMaskingEnabled}`);
 
       // Create audio stream
       const audioStream = new PassThrough();
@@ -82,11 +92,15 @@ class TranscriptionService {
         isActive: true,
         bytesReceived: 0,
         chunksReceived: 0,
+        piiMaskingEnabled,
         // Speaker tracking for post-processing
         speakerSegments: [], // Track speaker changes
         speakerTimings: {}, // Track speaker durations
         lastSpeaker: null,
         lastSpeakerTime: null,
+        // PII tracking
+        piiDetectedCount: 0,
+        piiEntitiesByType: {},
       });
 
       // Start AWS Transcribe stream immediately
@@ -112,6 +126,7 @@ class TranscriptionService {
       socket.emit("transcript", {
         type: "status",
         status: "Transcription started - speak now",
+        piiMaskingEnabled,
       });
 
       return { success: true };
@@ -351,20 +366,64 @@ class TranscriptionService {
               // Only emit if confidence is adequate (filter weak detections)
               const minConfidence = 0.5;
               if (speakerConfidence >= minConfidence || speaker !== "Unknown") {
+                
+                // Apply PII masking if enabled
+                let displayTranscript = transcript;
+                let piiDetected = false;
+                let piiMetadata = null;
+
+                if (session.piiMaskingEnabled && transcript.trim()) {
+                  const maskingResult = this.piiMaskingService.maskPii(transcript, {
+                    maskNames: true,
+                    maskNric: true,
+                    maskPhone: true,
+                    maskEmail: true,
+                    maskDates: false, // Keep dates for medical context
+                    maskAddresses: true,
+                    maskMedicalIds: true,
+                    maskFinancial: true,
+                    preserveLength: false
+                  });
+
+                  if (maskingResult.metadata.maskingApplied) {
+                    displayTranscript = maskingResult.maskedText;
+                    piiDetected = true;
+                    piiMetadata = maskingResult.metadata;
+                    
+                    // Update session PII statistics
+                    session.piiDetectedCount += maskingResult.metadata.totalEntitiesMasked;
+                    Object.keys(maskingResult.metadata.entitiesByType).forEach(type => {
+                      if (!session.piiEntitiesByType[type]) {
+                        session.piiEntitiesByType[type] = 0;
+                      }
+                      session.piiEntitiesByType[type] += maskingResult.metadata.entitiesByType[type].length;
+                    });
+
+                    console.log(
+                      `[${sessionId}] PII detected and masked: ${maskingResult.metadata.totalEntitiesMasked} entities`,
+                      maskingResult.metadata.entitiesByType
+                    );
+                  }
+                }
+
                 // Send to frontend
                 session.socket.emit("transcript", {
                   type: "transcript",
                   data: {
-                    transcript,
+                    transcript: displayTranscript,
+                    originalTranscript: transcript, // Keep original for backend storage
                     isFinal,
                     timestamp: Date.now(),
                     speaker,
                     confidence: speakerConfidence,
+                    piiDetected,
+                    piiMasked: session.piiMaskingEnabled && piiDetected,
+                    piiMetadata: piiDetected ? piiMetadata : null,
                   },
                 });
 
                 console.log(
-                  `[${sessionId}] ${isFinal ? "FINAL" : "partial"}: "${transcript}" (${speaker}, confidence: ${(speakerConfidence * 100).toFixed(0)}%)`,
+                  `[${sessionId}] ${isFinal ? "FINAL" : "partial"}: "${displayTranscript}" (${speaker}, confidence: ${(speakerConfidence * 100).toFixed(0)}%${piiDetected ? ', PII masked' : ''})`,
                 );
               }
             }
