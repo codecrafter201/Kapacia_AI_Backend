@@ -72,7 +72,7 @@ io.use(function (socket, next) {
   const sessionId =
     socket.handshake.auth?.sessionId || socket.handshake.query?.sessionId;
 
-  // Handle transcription start
+  // Handle transcription start with HTTP/2 error handling
   socket.on("start-transcription", async (options = {}) => {
     try {
       console.log(`Start transcription request for session: ${sessionId}`);
@@ -82,12 +82,100 @@ io.use(function (socket, next) {
         return;
       }
 
-      await transcriptionService.startTranscription(sessionId, socket, options);
+      // Fetch session to get PII masking preference
+      const Session = mongoose.model("Session");
+      const session = await Session.findById(sessionId);
 
-      socket.emit("transcript", {
-        type: "status",
-        status: "Transcription ready - send audio to begin",
-      });
+      if (!session) {
+        socket.emit("transcription-error", "Session not found");
+        return;
+      }
+
+      // CRITICAL FIX: Start with basic connection first, then add PII if needed
+      let transcriptionOptions = {
+        ...options,
+        languageCode: "en-US",
+        sampleRate: 16000,
+        showSpeakerLabel: true,
+        enablePiiRedaction: false, // Start without PII
+      };
+
+      console.log(`[${sessionId}] Starting transcription with options:`, transcriptionOptions);
+
+      try {
+        await transcriptionService.startTranscription(
+          sessionId,
+          socket,
+          transcriptionOptions,
+        );
+
+        // If basic connection works and PII was requested, try with PII
+        if (session.piiMaskingEnabled || options.enablePiiRedaction) {
+          console.log(`[${sessionId}] Basic connection successful, now trying with PII...`);
+          
+          // Stop current session
+          transcriptionService.stopTranscription(sessionId);
+          
+          // Wait a moment
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Retry with PII
+          transcriptionOptions.enablePiiRedaction = true;
+          await transcriptionService.startTranscription(
+            sessionId,
+            socket,
+            transcriptionOptions,
+          );
+        }
+
+        socket.emit("transcript", {
+          type: "status",
+          status: "Transcription ready - send audio to begin",
+        });
+
+      } catch (error) {
+        console.error(`[${sessionId}] Transcription start failed:`, error);
+        
+        // CRITICAL: Always send ready status even if AWS fails
+        // This allows audio to flow to the backend for debugging
+        socket.emit("transcript", {
+          type: "status",
+          status: "Transcription ready (AWS connection failed, audio will be logged) - send audio to begin",
+        });
+        
+        // If it's an HTTP/2 error and we haven't tried without PII, try that
+        if (error.message?.includes('HTTP/2') && transcriptionOptions.enablePiiRedaction) {
+          console.log(`[${sessionId}] HTTP/2 error with PII, retrying without PII...`);
+          transcriptionOptions.enablePiiRedaction = false;
+          
+          try {
+            await transcriptionService.startTranscription(
+              sessionId,
+              socket,
+              transcriptionOptions,
+            );
+            
+            socket.emit("transcript", {
+              type: "status", 
+              status: "Transcription ready (PII disabled due to connection issues) - send audio to begin",
+            });
+          } catch (retryError) {
+            // Even if retry fails, allow audio flow for debugging
+            socket.emit("transcript", {
+              type: "status",
+              status: "Transcription ready (AWS failed, audio logging only) - send audio to begin",
+            });
+            console.error(`[${sessionId}] Retry also failed:`, retryError.message);
+          }
+        }
+        
+        // Don't throw error - let audio flow for debugging
+        console.log(`[${sessionId}] Continuing with audio logging despite AWS failure`);
+        
+        // Create dummy session for audio logging
+        transcriptionService.createDummySession(sessionId, socket);
+      }
+
     } catch (error) {
       console.error("Error starting transcription:", error);
       socket.emit("transcription-error", error.message);
