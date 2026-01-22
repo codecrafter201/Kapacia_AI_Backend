@@ -1,0 +1,88 @@
+version: "3.8"
+networks: 
+    network:
+        driver: bridge
+
+volumes: 
+    mongodata:
+    miniodata:
+
+services:
+
+    traefik:
+        image: "traefik"
+        container_name: "traefik"
+        labels: 
+            - traefik.enable=true
+            - traefik.http.services.traefik.loadbalancer.server.port=8080
+            - traefik.http.routers.traefik.rule=Host(`traefik.localhost`)
+        command:
+            - "--log.level=DEBUG"
+            - "--api.insecure=true"
+            - "--providers.docker=true"
+            - "--providers.docker.exposedbydefault=false"
+            - "--entrypoints.web.address=:80"
+        ports:
+            - "80:80"
+            - "8080:8080"
+        volumes:
+            - "/var/run/docker.sock:/var/run/docker.sock:ro"
+        networks: 
+            - network
+
+    backend:
+        container_name: backend
+        build: .
+        labels: 
+            - traefik.enable=true
+            - traefik.http.services.backend.loadbalancer.server.port=3000
+            - traefik.http.routers.backend.rule=Host(`backend.localhost`)
+        ports: 
+            - "3000:3000"
+        depends_on: 
+            - mongodb
+        restart: always
+        command: npm run gulp
+        volumes: 
+            - ./:/backend
+            - /backend/node_modules
+        networks: 
+            - network
+
+    mongodb:
+        image: mongo
+        container_name: mongodb
+        restart: always
+        labels: 
+            - traefik.enable=true
+        ports: 
+            - "27017:27017"
+        environment:
+            MONGO_INITDB_ROOT_USERNAME: root
+            MONGO_INITDB_ROOT_PASSWORD: root
+            MONGO_INITDB_DATABASE: mycognity
+        networks: 
+            - network
+        volumes:
+            - mongodata:/data/db
+            - ./mongodb/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+
+    mongo-express:
+        image: mongo-express
+        container_name: mongodb-express
+        restart: always
+        labels: 
+            - traefik.enable=true
+            - traefik.http.services.mongo-express.loadbalancer.server.port=8081
+            - traefik.http.routers.mongo-express.rule=Host(`mongo-express.localhost`)
+        ports:
+            - "8081:8081"
+        environment:
+            ME_CONFIG_MONGODB_ADMINUSERNAME: root
+            ME_CONFIG_MONGODB_ADMINPASSWORD: root
+            ME_CONFIG_MONGODB_SERVER: mongodb
+        depends_on: 
+            - mongodb
+        networks: 
+            - network
+        
