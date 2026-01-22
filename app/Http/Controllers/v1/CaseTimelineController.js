@@ -48,7 +48,8 @@ o.getCaseTimeline = async (req, res, next) => {
   try {
     const { _id: userId } = req.decoded;
     const { caseId } = req.params;
-    const { eventType, startDate, endDate } = req.query;
+    const { eventType, startDate, endDate, allEntries, page, limit } =
+      req.query;
 
     // Verify the case exists and user has access to it
     const caseData = await Case.findById(caseId);
@@ -88,7 +89,14 @@ o.getCaseTimeline = async (req, res, next) => {
       filter.eventDate = { $lte: new Date(endDate) };
     }
 
-    const timeline = await CaseTimeline.find(filter)
+    // Pagination settings
+    const isAllEntries = allEntries === "true";
+    const pageNumber = parseInt(page) || 1;
+    const pageLimit = parseInt(limit) || 5; // Default 5 records per page
+    const skip = (pageNumber - 1) * pageLimit;
+
+    // Build query
+    let query = CaseTimeline.find(filter)
       .populate("case", "displayName internalRef")
       .populate("performedBy", "-password")
       .populate({
@@ -104,7 +112,17 @@ o.getCaseTimeline = async (req, res, next) => {
         path: "timelineSummary",
         select: "version status periodStart periodEnd sessionCount fileCount",
       })
-      .sort({ eventDate: -1 });
+      .sort({ created_at: -1 });
+
+    // Apply pagination if not requesting all entries
+    if (!isAllEntries) {
+      query = query.skip(skip).limit(pageLimit);
+    }
+
+    const timeline = await query;
+
+    // Get total count for pagination info
+    const totalCount = await CaseTimeline.countDocuments(filter);
 
     return json.successResponse(
       res,
@@ -112,6 +130,13 @@ o.getCaseTimeline = async (req, res, next) => {
         message: "Case timeline fetched successfully",
         keyName: "timeline",
         data: timeline,
+        pagination: {
+          total: totalCount,
+          currentPage: pageNumber,
+          pageSize: pageLimit,
+          totalPages: Math.ceil(totalCount / pageLimit),
+          hasMore: skip + pageLimit < totalCount,
+        },
         stats: {
           total: timeline.length,
           sessions: timeline.filter((t) => t.eventType === "session").length,
