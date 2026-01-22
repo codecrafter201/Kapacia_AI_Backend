@@ -62,23 +62,54 @@ o.createTranscript = async (req, res, next) => {
       );
     }
 
+    // Check if AWS PII redaction was used (transcript contains [PII] markers)
+    const awsPiiRedacted = rawText.includes('[PII]') || (editedText && editedText.includes('[PII]'));
+    const piiCount = awsPiiRedacted ? (rawText.match(/\[PII\]/g) || []).length : 0;
+
+    // Process segments for PII detection
+    let processedSegments = segments || [];
+    if (segments && Array.isArray(segments)) {
+      processedSegments = segments.map(segment => ({
+        ...segment,
+        piiDetected: segment.text ? segment.text.includes('[PII]') : false,
+        awsPiiRedacted: segment.text ? segment.text.includes('[PII]') : false
+      }));
+    }
+
+    console.log(`[TranscriptController] Creating transcript for session ${sessionId}:`, {
+      awsPiiRedacted,
+      piiCount,
+      piiMaskingEnabled: session.piiMaskingEnabled
+    });
+
     // Create transcript
     const newTranscript = new Transcript({
       session: sessionId,
       rawText,
       editedText: editedText || null,
       isEdited: !!editedText,
+      
+      // AWS PII redaction fields
+      piiMaskingEnabled: session.piiMaskingEnabled,
+      hasPii: awsPiiRedacted,
+      piiMaskingMetadata: awsPiiRedacted ? {
+        awsPiiRedaction: true,
+        totalEntitiesMasked: piiCount,
+        processedAt: new Date().toISOString(),
+        redactionMethod: 'AWS_TRANSCRIBE_STREAMING'
+      } : null,
+      
       wordCount: wordCount || rawText.split(/\s+/).length,
       languageDetected: languageDetected || "english",
       confidenceScore: confidenceScore || null,
-      segments: segments || [],
+      segments: processedSegments,
       status: status || "Draft",
     });
 
     await newTranscript.save();
 
     await newTranscript.populate([
-      { path: "session", select: "sessionNumber sessionDate language status" },
+      { path: "session", select: "sessionNumber sessionDate language status piiMaskingEnabled" },
     ]);
 
     return json.successResponse(
@@ -128,7 +159,7 @@ o.getTranscriptBySession = async (req, res, next) => {
       [
         {
           path: "session",
-          select: "sessionNumber sessionDate language status case",
+          select: "sessionNumber sessionDate language status case piiMaskingEnabled",
         },
       ],
     );
@@ -233,6 +264,30 @@ o.updateTranscript = async (req, res, next) => {
     if (editedText !== undefined) {
       transcript.editedText = editedText;
       transcript.isEdited = !!editedText;
+      
+      // Check if edited text contains AWS PII redaction markers
+      if (editedText && editedText.includes('[PII]')) {
+        const piiCount = (editedText.match(/\[PII\]/g) || []).length;
+        transcript.hasPii = true;
+        
+        // Update PII metadata
+        if (transcript.piiMaskingMetadata) {
+          transcript.piiMaskingMetadata.totalEntitiesMasked += piiCount;
+          transcript.piiMaskingMetadata.editedTextPiiCount = piiCount;
+        } else {
+          transcript.piiMaskingMetadata = {
+            awsPiiRedaction: true,
+            totalEntitiesMasked: piiCount,
+            editedTextPiiCount: piiCount,
+            processedAt: new Date().toISOString(),
+            redactionMethod: 'AWS_TRANSCRIBE_STREAMING'
+          };
+        }
+        
+        console.log(`[TranscriptController] PII detected in edited text for transcript ${id}:`, {
+          entitiesCount: piiCount
+        });
+      }
     }
     if (status) transcript.status = status;
     if (wordCount) transcript.wordCount = wordCount;
@@ -243,7 +298,7 @@ o.updateTranscript = async (req, res, next) => {
     await transcript.populate([
       {
         path: "session",
-        select: "sessionNumber sessionDate language status",
+        select: "sessionNumber sessionDate language status piiMaskingEnabled",
       },
     ]);
 

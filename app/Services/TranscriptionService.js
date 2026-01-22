@@ -5,6 +5,7 @@ const {
   StartStreamTranscriptionCommand,
 } = require("@aws-sdk/client-transcribe-streaming");
 const { PassThrough } = require("stream");
+const mongoose = require("mongoose");
 
 /**
  * AWS Transcribe Streaming Service
@@ -37,19 +38,42 @@ class TranscriptionService {
    * Start transcription immediately with audio stream
    */
   async startTranscription(sessionId, socket, options = {}) {
+    // Declare piiMaskingEnabled outside try block for proper scope
+    let piiMaskingEnabled = false;
+    
     try {
       console.log(`[${sessionId}] Starting transcription session`);
+
+      // Get session data to check PII masking settings
+      const Session = mongoose.model("Session");
+      const sessionData = await Session.findById(sessionId);
+      piiMaskingEnabled = sessionData?.piiMaskingEnabled !== false;
+
+      console.log(
+        `[${sessionId}] AWS PII redaction enabled: ${piiMaskingEnabled}`,
+      );
 
       // Create audio stream
       const audioStream = new PassThrough();
 
-      // Configure AWS Transcribe parameters
+      // Configure AWS Transcribe parameters with PII redaction
       const params = {
         LanguageCode: options.languageCode || "en-US",
         MediaSampleRateHertz: options.sampleRate || 16000,
         MediaEncoding: "pcm", // CRITICAL: Must be PCM for raw audio
         AudioStream: this.getAudioStream(audioStream),
       };
+
+      // Add AWS PII redaction if enabled
+      if (piiMaskingEnabled) {
+        params.ContentRedactionType = "PII";
+        // Don't specify PiiEntityTypes - let AWS redact all PII types by default
+        // This is more reliable for streaming transcription
+        
+        console.log(
+          `[${sessionId}] AWS PII redaction configured (all PII types)`,
+        );
+      }
 
       // Enhanced speaker diarization settings for better accuracy
       if (options.showSpeakerLabel !== false) {
@@ -71,6 +95,8 @@ class TranscriptionService {
         ShowSpeakerLabel: params.ShowSpeakerLabel,
         MaxSpeakerLabels: params.MaxSpeakerLabels,
         EnableChannelIdentification: params.EnableChannelIdentification,
+        ContentRedactionType: params.ContentRedactionType || 'None',
+        PiiRedactionEnabled: !!params.ContentRedactionType
       });
 
       // Prepare session before calling AWS so early audio chunks are not dropped
@@ -82,11 +108,16 @@ class TranscriptionService {
         isActive: true,
         bytesReceived: 0,
         chunksReceived: 0,
+        piiMaskingEnabled,
+        awsPiiRedactionEnabled: piiMaskingEnabled,
         // Speaker tracking for post-processing
         speakerSegments: [], // Track speaker changes
         speakerTimings: {}, // Track speaker durations
         lastSpeaker: null,
         lastSpeakerTime: null,
+        // PII tracking (AWS will handle the actual redaction)
+        piiDetectedCount: 0,
+        piiEntitiesByType: {},
       });
 
       // Start AWS Transcribe stream immediately
@@ -100,7 +131,9 @@ class TranscriptionService {
         session.isActive = true;
       }
 
-      console.log(`[${sessionId}] AWS Transcribe stream started successfully`);
+      console.log(
+        `[${sessionId}] AWS Transcribe stream started successfully with PII redaction: ${piiMaskingEnabled}`,
+      );
 
       // Process transcription results
       this.processTranscriptionStream(
@@ -112,11 +145,53 @@ class TranscriptionService {
       socket.emit("transcript", {
         type: "status",
         status: "Transcription started - speak now",
+        piiMaskingEnabled,
+        awsPiiRedactionEnabled: piiMaskingEnabled,
       });
 
       return { success: true };
     } catch (error) {
       console.error(`[${sessionId}] Failed to start transcription:`, error);
+      
+      // Check if this is a PII redaction related error
+      if (piiMaskingEnabled && (error.message?.includes('PII') || error.message?.includes('ContentRedaction'))) {
+        console.error(`[${sessionId}] PII redaction error detected. Trying without PII redaction...`);
+        
+        // Try again without PII redaction as fallback
+        try {
+          const fallbackParams = { ...params };
+          delete fallbackParams.ContentRedactionType;
+          delete fallbackParams.PiiEntityTypes;
+          
+          console.log(`[${sessionId}] Retrying without PII redaction...`);
+          const fallbackCommand = new StartStreamTranscriptionCommand(fallbackParams);
+          const fallbackResponse = await this.client.send(fallbackCommand);
+          
+          const session = this.sessions.get(sessionId);
+          if (session) {
+            session.response = fallbackResponse;
+            session.isActive = true;
+            session.awsPiiRedactionEnabled = false; // Mark as disabled
+          }
+          
+          console.log(`[${sessionId}] Fallback transcription started successfully (PII redaction disabled)`);
+          
+          this.processTranscriptionStream(sessionId, fallbackResponse.TranscriptResultStream);
+          
+          socket.emit("transcript", {
+            type: "status",
+            status: "Transcription started - PII redaction unavailable",
+            piiMaskingEnabled: false,
+            awsPiiRedactionEnabled: false,
+            fallbackMode: true
+          });
+          
+          return { success: true, fallbackMode: true };
+          
+        } catch (fallbackError) {
+          console.error(`[${sessionId}] Fallback also failed:`, fallbackError);
+        }
+      }
 
       const errorMsg =
         error.Message || error.message || "Failed to start transcription";
@@ -351,6 +426,20 @@ class TranscriptionService {
               // Only emit if confidence is adequate (filter weak detections)
               const minConfidence = 0.5;
               if (speakerConfidence >= minConfidence || speaker !== "Unknown") {
+                // AWS Transcribe already handles PII redaction if enabled
+                // The transcript will contain [PII] markers where PII was detected
+                const piiDetected = transcript.includes("[PII]");
+
+                if (piiDetected && session.awsPiiRedactionEnabled) {
+                  // Count PII instances for statistics
+                  const piiCount = (transcript.match(/\[PII\]/g) || []).length;
+                  session.piiDetectedCount += piiCount;
+
+                  console.log(
+                    `[${sessionId}] AWS PII redaction applied: ${piiCount} entities masked in this segment`,
+                  );
+                }
+
                 // Send to frontend
                 session.socket.emit("transcript", {
                   type: "transcript",
@@ -360,11 +449,15 @@ class TranscriptionService {
                     timestamp: Date.now(),
                     speaker,
                     confidence: speakerConfidence,
+                    piiDetected,
+                    piiMasked: session.awsPiiRedactionEnabled && piiDetected,
+                    awsPiiRedaction: session.awsPiiRedactionEnabled,
                   },
                 });
 
+                const piiStatus = piiDetected ? ", AWS PII redacted" : "";
                 console.log(
-                  `[${sessionId}] ${isFinal ? "FINAL" : "partial"}: "${transcript}" (${speaker}, confidence: ${(speakerConfidence * 100).toFixed(0)}%)`,
+                  `[${sessionId}] ${isFinal ? "FINAL" : "partial"}: "${transcript}" (${speaker}, confidence: ${(speakerConfidence * 100).toFixed(0)}%${piiStatus})`,
                 );
               }
             }
