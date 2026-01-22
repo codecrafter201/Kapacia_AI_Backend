@@ -6,7 +6,12 @@ const {
   GetObjectCommand,
 } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
-const { v4: uuidv4 } = require("uuid");
+const crypto = require("crypto");
+
+// Helper function to generate UUID v4
+function generateUUID() {
+  return crypto.randomUUID();
+}
 
 class S3Service {
   constructor() {
@@ -20,19 +25,6 @@ class S3Service {
       maxAttempts: 5,
     });
     this.bucketName = process.env.AWS_S3_BUCKET_NAME;
-
-    console.log("[S3Service] Initialized with:");
-    console.log("  Region:", process.env.AWS_REGION);
-    console.log("  Bucket:", this.bucketName);
-    console.log(
-      "  Access Key:",
-      process.env.AWS_ACCESS_KEY_ID ? "✓ Set" : "✗ Missing",
-    );
-    console.log(
-      "  Secret Key:",
-      process.env.AWS_SECRET_ACCESS_KEY ? "✓ Set" : "✗ Missing",
-    );
-    console.log("  Timeout: 10 minutes (600 seconds)");
   }
 
   /**
@@ -77,7 +69,7 @@ class S3Service {
     try {
       // Generate unique key for S3 object
       const timestamp = Date.now();
-      const uniqueId = require("uuid").v4();
+      const uniqueId = generateUUID();
       const extension = fileName ? fileName.split(".").pop() : "webm";
       const key = `recordings/${sessionId}/${timestamp}-${uniqueId}.${extension}`;
 
