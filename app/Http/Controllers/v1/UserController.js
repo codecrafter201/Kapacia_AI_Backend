@@ -358,5 +358,95 @@ o.getPractitionerUsers = async (req, res, next) => {
   }
 };
 
+o.updateProfile = async (req, res, next) => {
+  try {
+    const { _id } = req.decoded;
+    const { name } = req.body;
+
+    if (!name || name.trim() === "") {
+      return json.errorResponse(res, "Name is required", 400);
+    }
+
+    const user = await User.findById(_id);
+    if (!user) {
+      return json.errorResponse(res, "User not found", 404);
+    }
+
+    user.name = name.trim();
+    await user.save();
+
+    const updatedUser = await User.findById(_id).select("-password");
+
+    return json.successResponse(
+      res,
+      {
+        message: "Profile updated successfully",
+        keyName: "user",
+        data: updatedUser,
+      },
+      200
+    );
+  } catch (err) {
+    console.error("Failed to update profile:", err);
+    const errorMessage =
+      err.message || err.toString() || "Failed to update profile";
+    return json.errorResponse(res, errorMessage, 500);
+  }
+};
+
+o.updatePassword = async (req, res, next) => {
+  try {
+    const { _id } = req.decoded;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return json.errorResponse(
+        res,
+        "Current password and new password are required",
+        400
+      );
+    }
+
+    if (newPassword.length < 6) {
+      return json.errorResponse(
+        res,
+        "New password must be at least 6 characters long",
+        400
+      );
+    }
+
+    const user = await User.findById(_id);
+    if (!user) {
+      return json.errorResponse(res, "User not found", 404);
+    }
+
+    // Verify current password
+    const isPasswordValid = bcrypt.compareSync(currentPassword, user.password);
+    if (!isPasswordValid) {
+      return json.errorResponse(res, "Current password is incorrect", 401);
+    }
+
+    // Hash and update new password
+    user.password = bcrypt.hashSync(newPassword, 5);
+    user.password_changed_at = new Date();
+    await user.save();
+
+    return json.successResponse(
+      res,
+      {
+        message: "Password updated successfully",
+        keyName: "data",
+        data: null,
+      },
+      200
+    );
+  } catch (err) {
+    console.error("Failed to update password:", err);
+    const errorMessage =
+      err.message || err.toString() || "Failed to update password";
+    return json.errorResponse(res, errorMessage, 500);
+  }
+};
+
 module.exports = o;
     

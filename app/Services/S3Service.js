@@ -158,7 +158,7 @@ class S3Service {
     }
 
     const timestamp = Date.now();
-    const uniqueId = uuidv4();
+    const uniqueId = generateUUID();
     const extension = fileName ? fileName.split(".").pop() || "bin" : "bin";
     const key = `${keyPrefix}/${timestamp}-${uniqueId}.${extension}`;
 

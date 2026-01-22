@@ -38,6 +38,8 @@ app.group("/user", (Route) => {
   Route.post("/register", userCtrl.register);
   Route.post("/login", userCtrl.login);
   Route.get("/", authCtrl.authenticate, userCtrl.getUser);
+  Route.put("/profile", authCtrl.authenticate, userCtrl.updateProfile);
+  Route.put("/password", authCtrl.authenticate, userCtrl.updatePassword);
   Route.post("/forget-password", userCtrl.forgetPassword);
   Route.post("/verify-otp", userCtrl.verifyOtp);
   Route.post("/reset-password", userCtrl.resetPassword);
