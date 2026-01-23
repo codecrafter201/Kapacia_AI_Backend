@@ -220,7 +220,7 @@ o.resetPassword = async (req, res, next) => {
 
 o.getAllUsers = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, search = "", active } = req.query;
+    const { page = 1, limit = 10, search = "", active, role } = req.query;
     
     // Build filter
     const filter = {};
@@ -231,6 +231,11 @@ o.getAllUsers = async (req, res, next) => {
         { name: { $regex: search, $options: "i" } },
         { email: { $regex: search, $options: "i" } },
       ];
+    }
+    
+    // Role filter
+    if (role) {
+      filter.role = role;
     }
     
     // Active filter
@@ -444,6 +449,205 @@ o.updatePassword = async (req, res, next) => {
     console.error("Failed to update password:", err);
     const errorMessage =
       err.message || err.toString() || "Failed to update password";
+    return json.errorResponse(res, errorMessage, 500);
+  }
+};
+
+// Admin: Create user with credentials
+o.createUserByAdmin = async (req, res, next) => {
+  try {
+    const { name, email, password, role } = req.body;
+
+    // Validation
+    if (!name || !email || !password || !role) {
+      return json.errorResponse(
+        res,
+        "Name, email, password, and role are required",
+        400
+      );
+    }
+
+    // Validate role
+    if (!["admin", "practitioner"].includes(role)) {
+      return json.errorResponse(
+        res,
+        "Role must be either 'admin' or 'practitioner'",
+        400
+      );
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email: email });
+    if (existingUser) {
+      return json.errorResponse(res, "User with this email already exists", 400);
+    }
+
+    // Hash password
+    const hashedPassword = bcrypt.hashSync(password, 5);
+
+    // Create new user
+    const user = new User({
+      name: name,
+      email: email,
+      password: hashedPassword,
+      role: role,
+      active: true,
+    });
+
+    await user.save();
+
+    const userObject = user.toObject();
+    delete userObject.password;
+
+    return json.successResponse(
+      res,
+      {
+        message: "User created successfully by admin",
+        keyName: "user",
+        data: userObject,
+      },
+      201
+    );
+  } catch (err) {
+    console.error("Failed to create user by admin:", err);
+    const errorMessage =
+      err.message || err.toString() || "Failed to create user";
+    return json.errorResponse(res, errorMessage, 500);
+  }
+};
+
+// Admin: Update user credentials
+o.updateUserCredentials = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { name, email, password, role } = req.body;
+
+    // Validate ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return json.errorResponse(res, "Invalid user ID", 400);
+    }
+
+    // Find user
+    const user = await User.findById(id);
+    if (!user) {
+      return json.errorResponse(res, "User not found", 404);
+    }
+
+    // Update name if provided
+    if (name) {
+      user.name = name;
+    }
+
+    // Update email if provided and not already taken
+    if (email && email !== user.email) {
+      const existingUser = await User.findOne({ email: email });
+      if (existingUser) {
+        return json.errorResponse(
+          res,
+          "Email already in use by another user",
+          400
+        );
+      }
+      user.email = email;
+    }
+
+    // Update password if provided
+    if (password) {
+      user.password = bcrypt.hashSync(password, 5);
+      user.password_changed_at = new Date();
+    }
+
+    // Update role if provided and valid
+    if (role) {
+      if (!["admin", "practitioner"].includes(role)) {
+        return json.errorResponse(
+          res,
+          "Role must be either 'admin' or 'practitioner'",
+          400
+        );
+      }
+      user.role = role;
+    }
+
+    await user.save();
+
+    const userObject = user.toObject();
+    delete userObject.password;
+
+    return json.successResponse(
+      res,
+      {
+        message: "User credentials updated successfully",
+        keyName: "user",
+        data: userObject,
+      },
+      200
+    );
+  } catch (err) {
+    console.error("Failed to update user credentials:", err);
+    const errorMessage =
+      err.message || err.toString() || "Failed to update user credentials";
+    return json.errorResponse(res, errorMessage, 500);
+  }
+};
+
+// Admin: Toggle user active status (enable/disable)
+o.toggleUserStatus = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { active } = req.body;
+
+    // Validate ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return json.errorResponse(res, "Invalid user ID", 400);
+    }
+
+    // Validate active parameter
+    if (typeof active !== "boolean") {
+      return json.errorResponse(
+        res,
+        "Active parameter must be a boolean (true/false)",
+        400
+      );
+    }
+
+    // Find user
+    const user = await User.findById(id);
+    if (!user) {
+      return json.errorResponse(res, "User not found", 404);
+    }
+
+    // Prevent admin from disabling themselves
+    if (user._id.toString() === req.decoded._id.toString() && !active) {
+      return json.errorResponse(
+        res,
+        "You cannot disable your own account",
+        400
+      );
+    }
+
+    // Update active status
+    user.active = active;
+    await user.save();
+
+    const userObject = user.toObject();
+    delete userObject.password;
+
+    const statusMessage = active ? "enabled" : "disabled";
+
+    return json.successResponse(
+      res,
+      {
+        message: `User ${statusMessage} successfully`,
+        keyName: "user",
+        data: userObject,
+      },
+      200
+    );
+  } catch (err) {
+    console.error("Failed to toggle user status:", err);
+    const errorMessage =
+      err.message || err.toString() || "Failed to toggle user status";
     return json.errorResponse(res, errorMessage, 500);
   }
 };

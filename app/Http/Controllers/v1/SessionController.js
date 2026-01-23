@@ -676,4 +676,54 @@ o.getPresignedAudioUrl = async (req, res, next) => {
   }
 };
 
+// Admin: Get all sessions (for dashboard stats)
+o.getAllSessions = async (req, res, next) => {
+  try {
+    const { limit = 5, page = 1 } = req.query;
+
+    const safeLimit = Math.min(parseInt(limit) || 5, 100);
+    const pageNum = parseInt(page) || 1;
+    const skip = (pageNum - 1) * safeLimit;
+
+    // Get total count
+    const total = await Session.countDocuments();
+
+    // Get paginated sessions
+    const sessions = await Session.find()
+      .populate("case", "displayName internalRef status")
+      .populate("createdBy", "name email role")
+      .sort({ sessionDate: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(safeLimit);
+
+    // Calculate pagination metadata
+    const totalPages = Math.ceil(total / safeLimit);
+    const hasNextPage = pageNum < totalPages;
+    const hasPrevPage = pageNum > 1;
+
+    return json.successResponse(
+      res,
+      {
+        message: "All sessions fetched successfully",
+        keyName: "sessions",
+        data: sessions,
+        pagination: {
+          page: pageNum,
+          limit: safeLimit,
+          total,
+          totalPages,
+          hasNextPage,
+          hasPrevPage,
+        },
+      },
+      200,
+    );
+  } catch (err) {
+    console.error("Failed to fetch all sessions:", err);
+    const errorMessage =
+      err.message || err.toString() || "Failed to fetch sessions";
+    return json.errorResponse(res, errorMessage, 500);
+  }
+};
+
 module.exports = o;

@@ -49,6 +49,29 @@ app.group("/user", (Route) => {
     authCtrl.authenticateAdmin,
     userCtrl.getPractitionerUsers,
   );
+  // Admin User Management Routes
+  Route.post(
+    "/create-user",
+    authCtrl.authenticateAdmin,
+    userCtrl.createUserByAdmin,
+  );
+  // Primary (active) toggle-status path
+  Route.patch(
+    "/active/:id/toggle-status",
+    authCtrl.authenticateAdmin,
+    userCtrl.toggleUserStatus,
+  );
+  // Backward-compatible toggle-status path (no /active prefix)
+  Route.put(
+    "/:id/toggle-status",
+    authCtrl.authenticateAdmin,
+    userCtrl.toggleUserStatus,
+  );
+  Route.put(
+    "/:id/update-credentials",
+    authCtrl.authenticateAdmin,
+    userCtrl.updateUserCredentials,
+  );
 });
 
 app.group("/case", (Route) => {
@@ -73,11 +96,8 @@ app.group("/session", (Route) => {
     authCtrl.authenticate,
     sessionCtrl.getSessionsByCase,
   );
-  Route.get(
-    "/recent",
-    authCtrl.authenticate,
-    sessionCtrl.getRecentSessions,
-  );
+  Route.get("/recent", authCtrl.authenticate, sessionCtrl.getRecentSessions);
+  Route.get("/all/list", authCtrl.authenticateAdmin, sessionCtrl.getAllSessions);
   Route.get("/:id", authCtrl.authenticate, sessionCtrl.getSessionById);
   Route.put("/:id", authCtrl.authenticate, sessionCtrl.updateSession);
   Route.post(

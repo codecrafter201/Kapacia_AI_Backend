@@ -27,7 +27,7 @@ global.io = require("socket.io")(http, {
   path: "/socket.io",
   cors: {
     origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     credentials: true,
   },
   transports: ["websocket", "polling"],
