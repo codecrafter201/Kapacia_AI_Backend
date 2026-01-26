@@ -98,7 +98,11 @@ app.group("/session", (Route) => {
     sessionCtrl.getSessionsByCase,
   );
   Route.get("/recent", authCtrl.authenticate, sessionCtrl.getRecentSessions);
-  Route.get("/all/list", authCtrl.authenticateAdmin, sessionCtrl.getAllSessions);
+  Route.get(
+    "/all/list",
+    authCtrl.authenticateAdmin,
+    sessionCtrl.getAllSessions,
+  );
   Route.get("/:id", authCtrl.authenticate, sessionCtrl.getSessionById);
   Route.put("/:id", authCtrl.authenticate, sessionCtrl.updateSession);
   Route.post(
