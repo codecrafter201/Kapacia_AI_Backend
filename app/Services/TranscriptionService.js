@@ -6,6 +6,8 @@ const {
 } = require("@aws-sdk/client-transcribe-streaming");
 const { PassThrough } = require("stream");
 const mongoose = require("mongoose");
+const Transcript = mongoose.model("Transcript");
+const Session = mongoose.model("Session");
 
 /**
  * AWS Transcribe Streaming Service
@@ -123,6 +125,7 @@ class TranscriptionService {
         isActive: true,
         bytesReceived: 0,
         chunksReceived: 0,
+        language: sessionLanguage,
         piiMaskingEnabled,
         awsPiiRedactionEnabled: piiMaskingEnabled,
         // Speaker tracking for post-processing
@@ -470,6 +473,16 @@ class TranscriptionService {
                   },
                 });
 
+                // Persist final transcripts while recording so data is not lost on disconnect
+                if (isFinal) {
+                  this.persistTranscriptSegment(sessionId, {
+                    transcript,
+                    speaker,
+                    timestamp: Date.now(),
+                    piiDetected,
+                  });
+                }
+
                 const piiStatus = piiDetected ? ", AWS PII redacted" : "";
                 console.log(
                   `[${sessionId}] ${isFinal ? "FINAL" : "partial"}: "${transcript}" (${speaker}, confidence: ${(speakerConfidence * 100).toFixed(0)}%${piiStatus})`,
@@ -489,6 +502,96 @@ class TranscriptionService {
       if (session.socket) {
         session.socket.emit("transcription-error", error.message);
       }
+    }
+  }
+
+  async persistTranscriptSegment(sessionId, { transcript, speaker, timestamp, piiDetected }) {
+    try {
+      const sessionState = this.sessions.get(sessionId);
+
+      // Fallback fetch if state is missing (e.g., service restart)
+      let language = sessionState?.language || "english";
+      let piiMaskingEnabled = sessionState?.piiMaskingEnabled !== false;
+
+      if (!sessionState) {
+        const sessionDoc = await Session.findById(sessionId).select(
+          "language piiMaskingEnabled",
+        );
+        if (sessionDoc) {
+          language = sessionDoc.language || language;
+          if (typeof sessionDoc.piiMaskingEnabled === "boolean") {
+            piiMaskingEnabled = sessionDoc.piiMaskingEnabled;
+          }
+        }
+      }
+
+      const text = transcript || "";
+      const isoTimestamp = new Date(timestamp || Date.now()).toISOString();
+
+      const segment = {
+        text,
+        speaker: speaker || "Unknown",
+        timestamp: isoTimestamp,
+        isFinal: true,
+      };
+
+      const wordCountIncrement = text.split(/\s+/).filter(Boolean).length;
+      const piiCount = (text.match(/\[PII\]/g) || []).length;
+      const hasPii = piiDetected || piiCount > 0;
+
+      let transcriptDoc = await Transcript.findOne({ session: sessionId });
+
+      if (!transcriptDoc) {
+        transcriptDoc = new Transcript({
+          session: sessionId,
+          rawText: `[${isoTimestamp}] ${segment.speaker}: ${text}`,
+          editedText: null,
+          isEdited: false,
+          piiMaskingEnabled,
+          hasPii,
+          piiMaskingMetadata: hasPii
+            ? {
+                awsPiiRedaction: true,
+                totalEntitiesMasked: piiCount,
+                processedAt: new Date().toISOString(),
+                redactionMethod: "AWS_TRANSCRIBE_STREAMING",
+              }
+            : null,
+          wordCount: wordCountIncrement,
+          languageDetected: language,
+          confidenceScore: null,
+          segments: [segment],
+          status: "Draft",
+        });
+      } else {
+        transcriptDoc.rawText = transcriptDoc.rawText
+          ? `${transcriptDoc.rawText}\n[${isoTimestamp}] ${segment.speaker}: ${text}`
+          : `[${isoTimestamp}] ${segment.speaker}: ${text}`;
+        transcriptDoc.wordCount =
+          (transcriptDoc.wordCount || 0) + wordCountIncrement;
+        transcriptDoc.languageDetected =
+          transcriptDoc.languageDetected || language;
+        transcriptDoc.piiMaskingEnabled = piiMaskingEnabled;
+        transcriptDoc.hasPii = transcriptDoc.hasPii || hasPii;
+
+        if (hasPii) {
+          const existingMetadata = transcriptDoc.piiMaskingMetadata || {};
+          transcriptDoc.piiMaskingMetadata = {
+            ...existingMetadata,
+            awsPiiRedaction: true,
+            totalEntitiesMasked:
+              (existingMetadata.totalEntitiesMasked || 0) + piiCount,
+            processedAt: new Date().toISOString(),
+            redactionMethod: "AWS_TRANSCRIBE_STREAMING",
+          };
+        }
+
+        transcriptDoc.segments.push(segment);
+      }
+
+      await transcriptDoc.save();
+    } catch (err) {
+      console.error(`[${sessionId}] Failed to persist live transcript:`, err);
     }
   }
 
