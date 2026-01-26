@@ -13,6 +13,24 @@ const json = require("../../../Traits/ApiResponser");
 
 const VALID_STATUSES = ["Active", "Closed", "OnHold", "Unapporved"];
 
+// Generate the next internal reference like CASE-YYYY-XXX
+const generateInternalRef = async () => {
+  const year = new Date().getFullYear();
+  const lastCase = await Case.findOne({
+    internalRef: new RegExp(`^CASE-${year}-`),
+  })
+    .sort({ internalRef: -1 })
+    .limit(1);
+
+  let caseNumber = 1;
+  if (lastCase && lastCase.internalRef) {
+    const lastNumber = parseInt(lastCase.internalRef.split("-")[2]);
+    caseNumber = Number.isNaN(lastNumber) ? 1 : lastNumber + 1;
+  }
+
+  return `CASE-${year}-${String(caseNumber).padStart(3, "0")}`;
+};
+
 let o = {};
 
 /**
@@ -247,20 +265,7 @@ o.createCase = async (req, res, next) => {
     }
 
     // Generate internal reference (CASE-YYYY-XXX format)
-    const year = new Date().getFullYear();
-    const lastCase = await Case.findOne({
-      internalRef: new RegExp(`^CASE-${year}-`),
-    })
-      .sort({ internalRef: -1 })
-      .limit(1);
-
-    let caseNumber = 1;
-    if (lastCase && lastCase.internalRef) {
-      const lastNumber = parseInt(lastCase.internalRef.split("-")[2]);
-      caseNumber = lastNumber + 1;
-    }
-
-    const internalRef = `CASE-${year}-${String(caseNumber).padStart(3, "0")}`;
+    const internalRef = await generateInternalRef();
 
     // Create the case
     const newCase = new Case({
@@ -291,6 +296,52 @@ o.createCase = async (req, res, next) => {
     );
   } catch (err) {
     console.error("Failed to create case:", err);
+    const errorMessage =
+      err.message || err.toString() || "Failed to create case";
+    return json.errorResponse(res, errorMessage, 500);
+  }
+};
+
+// Practitioners create their own case; always Active and self-assigned
+o.createCaseSelf = async (req, res, next) => {
+  try {
+    const { displayName, tags } = req.body;
+    const { _id: userId } = req.decoded;
+
+    if (!displayName) {
+      return json.errorResponse(res, "displayName is required", 400);
+    }
+
+    const internalRef = await generateInternalRef();
+
+    const newCase = new Case({
+      displayName,
+      internalRef,
+      assignedTo: userId,
+      createdBy: userId,
+      tags: tags || [],
+      status: "Active",
+    });
+
+    await newCase.save();
+
+    await newCase.populate([
+      { path: "assignedTo", select: "-password" },
+      { path: "createdBy", select: "-password" },
+    ]);
+
+    return json.successResponse(
+      res,
+      {
+        message: "Case created successfully",
+        userMessage: "Your case has been created",
+        keyName: "case",
+        data: newCase,
+      },
+      201,
+    );
+  } catch (err) {
+    console.error("Failed to create self case:", err);
     const errorMessage =
       err.message || err.toString() || "Failed to create case";
     return json.errorResponse(res, errorMessage, 500);

@@ -76,6 +76,7 @@ app.group("/user", (Route) => {
 
 app.group("/case", (Route) => {
   Route.post("/", authCtrl.authenticateAdmin, caseCtrl.createCase);
+  Route.post("/self", authCtrl.authenticate, caseCtrl.createCaseSelf);
   Route.get("/", authCtrl.authenticateAdmin, caseCtrl.getAllCases);
   Route.get("/my-cases", authCtrl.authenticate, caseCtrl.getMyCases);
   Route.get("/:id", authCtrl.authenticate, caseCtrl.getCaseById);
@@ -133,6 +134,11 @@ app.group("/file", (Route) => {
   );
   Route.get("/case/:caseId", authCtrl.authenticate, fileCtrl.getFilesByCase);
   Route.get("/:id", authCtrl.authenticate, fileCtrl.getFileById);
+  Route.get(
+    "/:id/presign",
+    authCtrl.authenticate,
+    fileCtrl.getPresignedFileUrl,
+  );
   Route.delete("/:id", authCtrl.authenticate, fileCtrl.deleteFile);
 });
 

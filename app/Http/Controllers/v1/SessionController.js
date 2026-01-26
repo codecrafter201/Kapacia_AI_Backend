@@ -3,6 +3,9 @@
 const mongoose = require("mongoose");
 const Session = mongoose.model("Session");
 const Case = mongoose.model("Case");
+const CaseTimeline = mongoose.model("CaseTimeline");
+const Soap = mongoose.model("Soap");
+const TimelineSummary = mongoose.model("TimelineSummary");
 const timelineCtrl = require("./CaseTimelineController");
 const s3Service = require("../../../Services/S3Service");
 
@@ -483,6 +486,14 @@ o.deleteSession = async (req, res, next) => {
       await caseData.save();
     }
 
+    // Remove timeline entries and artifacts tied to this session
+    await CaseTimeline.deleteMany({ session: id });
+    await Soap.deleteMany({ session: id });
+    await TimelineSummary.updateMany(
+      { sessionsIncluded: id },
+      { $pull: { sessionsIncluded: id } },
+    );
+
     await Session.findByIdAndDelete(id);
 
     return json.successResponse(
@@ -608,11 +619,14 @@ o.getPresignedAudioUrl = async (req, res, next) => {
     const { _id: userId } = req.decoded;
     const { id } = req.params;
 
+    console.log(`[getPresignedAudioUrl] Requested for session: ${id}`);
+
     const session = await Session.findById(id).populate(
       "case",
       "assignedTo displayName internalRef",
     );
     if (!session) {
+      console.error(`[getPresignedAudioUrl] Session not found: ${id}`);
       return json.errorResponse(res, "Session not found", 404);
     }
 
@@ -622,6 +636,9 @@ o.getPresignedAudioUrl = async (req, res, next) => {
       session.case.assignedTo.toString() !== userId.toString() &&
       user.role !== "admin"
     ) {
+      console.warn(
+        `[getPresignedAudioUrl] Access denied for user ${userId} to session ${id}`,
+      );
       return json.errorResponse(
         res,
         "You don't have access to this session",
@@ -629,30 +646,51 @@ o.getPresignedAudioUrl = async (req, res, next) => {
       );
     }
 
-    // Determine key
+    // Determine key - prefer audioS3Key as it's the source of truth
     let key = session.audioS3Key;
+    
+    console.log(`[getPresignedAudioUrl] Session audio details:`, {
+      sessionId: id,
+      audioS3Key: session.audioS3Key ? "✓ Present" : "✗ Missing",
+      audioUrl: session.audioUrl ? "✓ Present" : "✗ Missing",
+      hasAudio: !!(session.audioS3Key || session.audioUrl),
+    });
+
     if (!key && session.audioUrl) {
-      // Try to derive key from stored URL
+      // Try to derive key from stored URL (fallback)
       try {
         const url = new URL(session.audioUrl);
         // URL path starts with /<bucketKey>
         key = decodeURIComponent(url.pathname.replace(/^\//, ""));
+        console.log(`[getPresignedAudioUrl] Derived key from audioUrl: ${key}`);
       } catch (e) {
-        // ignore
+        console.warn(
+          `[getPresignedAudioUrl] Failed to derive key from audioUrl:`,
+          e.message,
+        );
       }
     }
 
     if (!key) {
+      console.error(
+        `[getPresignedAudioUrl] No audio S3 key found for session ${id}. Audio upload may have failed.`,
+      );
       return json.errorResponse(
         res,
-        "No audio key found for this session",
+        "No audio file found for this session. Please upload a recording first.",
         400,
       );
     }
 
-    // Default 15 minutes
+    // Default 15 minutes, but allow longer expiry via env var
     const expiresIn = parseInt(process.env.S3_PRESIGN_EXPIRY || "900", 10);
+    
+    console.log(
+      `[getPresignedAudioUrl] Generating presigned URL (expires in ${expiresIn}s)`,
+    );
     const signedUrl = await s3Service.getPresignedUrl(key, expiresIn);
+
+    console.log(`[getPresignedAudioUrl] Presigned URL generated successfully`);
 
     return json.successResponse(
       res,
@@ -669,7 +707,14 @@ o.getPresignedAudioUrl = async (req, res, next) => {
       200,
     );
   } catch (err) {
-    console.error("Failed to generate presigned audio URL:", err);
+    console.error(
+      `[getPresignedAudioUrl] Error generating presigned URL:`,
+      {
+        error: err.message,
+        code: err.code,
+        stack: err.stack,
+      },
+    );
     const errorMessage =
       err.message || err.toString() || "Failed to generate presigned URL";
     return json.errorResponse(res, errorMessage, 500);

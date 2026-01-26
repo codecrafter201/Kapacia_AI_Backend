@@ -41,13 +41,49 @@ class S3Service {
       throw new Error("S3 key is required to generate presigned URL");
     }
 
-    const command = new GetObjectCommand({
-      Bucket: this.bucketName,
-      Key: key,
-    });
-    return getSignedUrl(this.s3Client, command, {
-      expiresIn: expiresInSeconds,
-    });
+    try {
+      console.log(`[S3Service] Generating presigned URL for key: ${key}`);
+      const command = new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: key,
+      });
+
+      const signedUrl = await getSignedUrl(this.s3Client, command, {
+        expiresIn: expiresInSeconds,
+      });
+
+      console.log(
+        `[S3Service] Presigned URL generated successfully (expires in ${expiresInSeconds}s)`,
+      );
+      return signedUrl;
+    } catch (error) {
+      console.error("[S3Service] Failed to generate presigned URL:", {
+        key,
+        bucket: this.bucketName,
+        region: process.env.AWS_REGION,
+        error: error.message,
+        code: error.code,
+      });
+
+      // Provide helpful error messages
+      if (error.code === "NoSuchKey") {
+        throw new Error(
+          `Audio file not found in S3. Key: ${key}. The file may have been deleted.`,
+        );
+      }
+      if (error.code === "AccessDenied") {
+        throw new Error(
+          `S3 Access Denied. IAM user needs s3:GetObject permission on bucket "${this.bucketName}"`,
+        );
+      }
+      if (error.code === "NoSuchBucket") {
+        throw new Error(
+          `S3 bucket does not exist: ${this.bucketName}. Check AWS_S3_BUCKET_NAME environment variable.`,
+        );
+      }
+
+      throw new Error(`Failed to generate presigned URL: ${error.message}`);
+    }
   }
 
   /**

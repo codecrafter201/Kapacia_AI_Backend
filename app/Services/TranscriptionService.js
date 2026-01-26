@@ -35,22 +35,37 @@ class TranscriptionService {
   }
 
   /**
+   * Map frontend language to AWS Transcribe language code
+   */
+  getAWSLanguageCode(language) {
+    const languageMap = {
+      english: "en-US",
+      mandarin: "zh-CN", // Mandarin Chinese
+    };
+    return languageMap[language] || "en-US"; // Default to English
+  }
+
+  /**
    * Start transcription immediately with audio stream
    */
   async startTranscription(sessionId, socket, options = {}) {
-    // Declare piiMaskingEnabled outside try block for proper scope
+    // Declare piiMaskingEnabled and language outside try block for proper scope
     let piiMaskingEnabled = false;
+    let languageCode = "en-US";
+    let sessionLanguage = "english";
     
     try {
       console.log(`[${sessionId}] Starting transcription session`);
 
-      // Get session data to check PII masking settings
+      // Get session data to check PII masking settings and language
       const Session = mongoose.model("Session");
       const sessionData = await Session.findById(sessionId);
       piiMaskingEnabled = sessionData?.piiMaskingEnabled !== false;
+      sessionLanguage = sessionData?.language || "english";
+      languageCode = this.getAWSLanguageCode(sessionLanguage);
 
       console.log(
-        `[${sessionId}] AWS PII redaction enabled: ${piiMaskingEnabled}`,
+        `[${sessionId}] Session language: ${sessionLanguage} (AWS code: ${languageCode}), PII redaction enabled: ${piiMaskingEnabled}`,
       );
 
       // Create audio stream
@@ -58,7 +73,7 @@ class TranscriptionService {
 
       // Configure AWS Transcribe parameters with PII redaction
       const params = {
-        LanguageCode: options.languageCode || "en-US",
+        LanguageCode: languageCode,
         MediaSampleRateHertz: options.sampleRate || 16000,
         MediaEncoding: "pcm", // CRITICAL: Must be PCM for raw audio
         AudioStream: this.getAudioStream(audioStream),

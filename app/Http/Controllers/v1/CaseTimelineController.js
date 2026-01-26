@@ -3,6 +3,7 @@
 const mongoose = require("mongoose");
 const CaseTimeline = mongoose.model("CaseTimeline");
 const Case = mongoose.model("Case");
+const Session = mongoose.model("Session");
 
 const json = require("../../../Traits/ApiResponser");
 
@@ -48,7 +49,7 @@ o.getCaseTimeline = async (req, res, next) => {
   try {
     const { _id: userId } = req.decoded;
     const { caseId } = req.params;
-    const { eventType, startDate, endDate, allEntries, page, limit } =
+    const { eventType, sessionStatus, startDate, endDate, allEntries, page, limit } =
       req.query;
 
     // Verify the case exists and user has access to it
@@ -67,6 +68,54 @@ o.getCaseTimeline = async (req, res, next) => {
 
     // Build filter
     const filter = { case: caseId };
+
+    // Filter by session status (only applicable to session timeline entries)
+    if (sessionStatus) {
+      const statuses = sessionStatus
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s);
+
+      if (statuses.length > 0) {
+        filter.eventType = "session";
+
+        // Find sessions for this case that match the requested statuses
+        const matchingSessions = await Session.find({
+          case: caseId,
+          status: { $in: statuses },
+        }).select("_id");
+
+        const sessionIds = matchingSessions.map((s) => s._id);
+
+        // If no sessions match, short-circuit with empty results
+        if (sessionIds.length === 0) {
+          return json.successResponse(
+            res,
+            {
+              message: "Case timeline fetched successfully",
+              keyName: "timeline",
+              data: [],
+              pagination: {
+                total: 0,
+                currentPage: 1,
+                pageSize: parseInt(limit) || 5,
+                totalPages: 0,
+                hasMore: false,
+              },
+              stats: {
+                total: 0,
+                sessions: 0,
+                fileUploads: 0,
+                summaries: 0,
+              },
+            },
+            200,
+          );
+        }
+
+        filter.session = { $in: sessionIds };
+      }
+    }
 
     // Filter by event type if provided
     if (eventType) {

@@ -10,6 +10,8 @@ const userSchema = new mongoose.Schema({
 	last_login_at: { type: Date },
 	password_changed_at: { type: Date },
 	otp: { type: String  },
+	piiMasking: { type: Boolean, default: true },
+	language: { type: String, enum: ['english', 'mandarin'], default: 'english' },
 }, { timestamps: true });
 
 mongoose.model('User', userSchema);

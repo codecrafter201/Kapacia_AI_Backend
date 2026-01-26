@@ -195,6 +195,74 @@ o.getFileById = async (req, res, next) => {
   }
 };
 
+// Get a presigned URL to access/download the file from S3
+o.getPresignedFileUrl = async (req, res, next) => {
+  try {
+    const { _id: userId } = req.decoded;
+    const { id } = req.params;
+
+    const file = await File.findById(id)
+      .populate("case", "assignedTo")
+      .populate("uploadedBy", "-password");
+
+    if (!file) {
+      return json.errorResponse(res, "File not found", 404);
+    }
+
+    // Access check
+    const user = await mongoose.model("User").findById(userId);
+    if (
+      file.case.assignedTo.toString() !== userId.toString() &&
+      user.role !== "admin"
+    ) {
+      return json.errorResponse(res, "You don't have access to this file", 403);
+    }
+
+    // Determine storage key
+    let storageKey = file.storageKey;
+    if (!storageKey && file.fileUrl) {
+      try {
+        const url = new URL(file.fileUrl);
+        storageKey = decodeURIComponent(url.pathname.replace(/^\//, ""));
+      } catch (e) {
+        console.warn("Failed to derive storage key from fileUrl", e.message);
+      }
+    }
+
+    if (!storageKey) {
+      return json.errorResponse(
+        res,
+        "No storage key found for this file. Please re-upload the file.",
+        400,
+      );
+    }
+
+    // Generate presigned URL (15 minutes default)
+    const expiresIn = parseInt(process.env.S3_PRESIGN_EXPIRY || "900", 10);
+    const url = await s3Service.getPresignedUrl(storageKey, expiresIn);
+
+    return json.successResponse(
+      res,
+      {
+        message: "Presigned URL generated",
+        keyName: "file",
+        data: {
+          url,
+          expiresIn,
+          fileName: file.fileName,
+          mimeType: file.mimeType,
+        },
+      },
+      200,
+    );
+  } catch (err) {
+    console.error("Failed to generate presigned file URL:", err);
+    const errorMessage =
+      err.message || err.toString() || "Failed to generate presigned URL";
+    return json.errorResponse(res, errorMessage, 500);
+  }
+};
+
 o.deleteFile = async (req, res, next) => {
   try {
     const { _id: userId } = req.decoded;

@@ -366,18 +366,37 @@ o.getPractitionerUsers = async (req, res, next) => {
 o.updateProfile = async (req, res, next) => {
   try {
     const { _id } = req.decoded;
-    const { name } = req.body;
-
-    if (!name || name.trim() === "") {
-      return json.errorResponse(res, "Name is required", 400);
-    }
+    const { name, piiMasking, language } = req.body;
 
     const user = await User.findById(_id);
     if (!user) {
       return json.errorResponse(res, "User not found", 404);
     }
 
-    user.name = name.trim();
+    // Validation: if piiMasking is enabled, only English is allowed
+    if (piiMasking === true && language && language !== 'english') {
+      return json.errorResponse(
+        res,
+        "PII Masking can only be enabled with English language",
+        400
+      );
+    }
+
+    // Update fields if provided
+    if (name !== undefined && name.trim() !== "") {
+      user.name = name.trim();
+    }
+    if (piiMasking !== undefined) {
+      user.piiMasking = piiMasking;
+    }
+    if (language !== undefined) {
+      user.language = language;
+      // Auto-disable PII masking if language is not English
+      if (language !== 'english') {
+        user.piiMasking = false;
+      }
+    }
+
     await user.save();
 
     const updatedUser = await User.findById(_id).select("-password");
@@ -386,6 +405,7 @@ o.updateProfile = async (req, res, next) => {
       res,
       {
         message: "Profile updated successfully",
+        userMessage: "Your profile has been updated",
         keyName: "user",
         data: updatedUser,
       },
