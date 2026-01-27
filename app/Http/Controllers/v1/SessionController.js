@@ -297,10 +297,9 @@ o.stopRecording = async (req, res, next) => {
   try {
     const { _id: userId } = req.decoded;
     const { id } = req.params;
-    const { audioUrl, audioFileSizeBytes, durationSeconds } = req.body;
+    const { audioFileSizeBytes, durationSeconds } = req.body;
 
     console.log("[stopRecording] payload:", {
-      audioUrl,
       audioFileSizeBytes,
       durationSeconds,
       paramsId: id,
@@ -326,15 +325,18 @@ o.stopRecording = async (req, res, next) => {
       );
     }
 
-    session.audioUrl = audioUrl;
-    session.audioFileSizeBytes = audioFileSizeBytes;
-    session.durationSeconds = durationSeconds;
+    // Only update duration and file size - audioUrl and audioS3Key are set by uploadRecording
+    if (audioFileSizeBytes !== undefined)
+      session.audioFileSizeBytes = audioFileSizeBytes;
+    if (durationSeconds !== undefined)
+      session.durationSeconds = durationSeconds;
     session.status = "Processing";
     await session.save();
 
     console.log("[stopRecording] after save:", {
       sessionId: session._id,
       audioUrl: session.audioUrl,
+      audioS3Key: session.audioS3Key,
       audioFileSizeBytes: session.audioFileSizeBytes,
       durationSeconds: session.durationSeconds,
     });
@@ -746,6 +748,16 @@ o.getPresignedAudioUrl = async (req, res, next) => {
       );
     }
 
+    // Check if session has audio
+    if (!session.hasRecording) {
+      console.warn(`[getPresignedAudioUrl] Session ${id} has no recording`);
+      return json.errorResponse(
+        res,
+        "This session doesn't have an audio recording",
+        400,
+      );
+    }
+
     // Determine key - prefer audioS3Key as it's the source of truth
     let key = session.audioS3Key;
 
@@ -753,7 +765,8 @@ o.getPresignedAudioUrl = async (req, res, next) => {
       sessionId: id,
       audioS3Key: session.audioS3Key ? "✓ Present" : "✗ Missing",
       audioUrl: session.audioUrl ? "✓ Present" : "✗ Missing",
-      hasAudio: !!(session.audioS3Key || session.audioUrl),
+      hasRecording: session.hasRecording,
+      status: session.status,
     });
 
     if (!key && session.audioUrl) {
@@ -777,37 +790,73 @@ o.getPresignedAudioUrl = async (req, res, next) => {
       );
       return json.errorResponse(
         res,
-        "No audio file found for this session. Please upload a recording first.",
+        "No audio file found for this session. The recording may not have been uploaded successfully.",
         400,
       );
     }
 
-    // Default 15 minutes, but allow longer expiry via env var
-    const expiresIn = parseInt(process.env.S3_PRESIGN_EXPIRY || "900", 10);
+    console.log(`[getPresignedAudioUrl] Generating presigned URL for key: ${key}`);
+    console.log(
+      `[getPresignedAudioUrl] S3 Bucket: ${process.env.AWS_S3_BUCKET_NAME}`,
+    );
+    console.log(`[getPresignedAudioUrl] S3 Region: ${process.env.AWS_REGION}`);
+
+    // Default 2 hours, but allow custom expiry via env var
+    const expiresIn = parseInt(process.env.S3_PRESIGN_EXPIRY || "7200", 10);
 
     console.log(
       `[getPresignedAudioUrl] Generating presigned URL (expires in ${expiresIn}s)`,
     );
-    const signedUrl = await s3Service.getPresignedUrl(key, expiresIn);
+    
+    try {
+      const signedUrl = await s3Service.getPresignedUrl(key, expiresIn);
 
-    console.log(`[getPresignedAudioUrl] Presigned URL generated successfully`);
+      console.log(`[getPresignedAudioUrl] Presigned URL generated successfully`);
 
-    return json.successResponse(
-      res,
-      {
-        message: "Presigned URL generated",
-        keyName: "audio",
-        data: {
-          url: signedUrl,
-          key,
-          expiresIn,
-          expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      return json.successResponse(
+        res,
+        {
+          message: "Presigned URL generated successfully",
+          keyName: "audio",
+          data: {
+            url: signedUrl,
+            key,
+            expiresIn,
+            expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+            sessionId: id,
+            hasRecording: session.hasRecording,
+          },
         },
-      },
-      200,
-    );
+        200,
+      );
+    } catch (s3Error) {
+      console.error(`[getPresignedAudioUrl] S3 service error:`, s3Error.message);
+      
+      // Return specific error messages to help with debugging
+      if (s3Error.message.includes('not found')) {
+        return json.errorResponse(
+          res,
+          "Audio file not found in storage. The recording may have been deleted or failed to upload.",
+          404,
+        );
+      }
+      
+      if (s3Error.message.includes('Access Denied')) {
+        return json.errorResponse(
+          res,
+          "Storage access denied. Please contact system administrator.",
+          403,
+        );
+      }
+      
+      return json.errorResponse(
+        res,
+        `Unable to access audio file: ${s3Error.message}`,
+        500,
+      );
+    }
   } catch (err) {
-    console.error(`[getPresignedAudioUrl] Error generating presigned URL:`, {
+    console.error(`[getPresignedAudioUrl] Unexpected error:`, {
       error: err.message,
       code: err.code,
       stack: err.stack,

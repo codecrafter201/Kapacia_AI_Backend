@@ -30,10 +30,10 @@ class S3Service {
   /**
    * Generate a presigned URL for an object key
    * @param {string} key - S3 object key
-   * @param {number} expiresInSeconds - Expiry in seconds (default 900 = 15 minutes)
+   * @param {number} expiresInSeconds - Expiry in seconds (default 7200 = 2 hours)
    * @returns {Promise<string>} - Presigned URL
    */
-  async getPresignedUrl(key, expiresInSeconds = 900) {
+  async getPresignedUrl(key, expiresInSeconds = 7200) {
     if (!this.bucketName) {
       throw new Error("AWS_S3_BUCKET_NAME environment variable not set");
     }
@@ -43,6 +43,25 @@ class S3Service {
 
     try {
       console.log(`[S3Service] Generating presigned URL for key: ${key}`);
+      
+      // First check if the object exists
+      const headCommand = new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: key,
+      });
+
+      try {
+        // This will throw if object doesn't exist
+        await this.s3Client.send(headCommand);
+        console.log(`[S3Service] Object exists in S3: ${key}`);
+      } catch (headError) {
+        if (headError.name === 'NoSuchKey' || headError.$metadata?.httpStatusCode === 404) {
+          throw new Error(`Audio file not found in S3. Key: ${key}. The recording may not have been uploaded successfully.`);
+        }
+        // Re-throw other errors (access denied, etc.)
+        throw headError;
+      }
+
       const command = new GetObjectCommand({
         Bucket: this.bucketName,
         Key: key,
@@ -63,22 +82,28 @@ class S3Service {
         region: process.env.AWS_REGION,
         error: error.message,
         code: error.code,
+        name: error.name,
       });
 
       // Provide helpful error messages
-      if (error.code === "NoSuchKey") {
+      if (error.name === "NoSuchKey" || error.message?.includes('not found')) {
         throw new Error(
-          `Audio file not found in S3. Key: ${key}. The file may have been deleted.`,
+          `Audio file not found in S3. Key: ${key}. The file may have been deleted or the upload failed.`,
         );
       }
-      if (error.code === "AccessDenied") {
+      if (error.code === "AccessDenied" || error.name === "AccessDenied") {
         throw new Error(
           `S3 Access Denied. IAM user needs s3:GetObject permission on bucket "${this.bucketName}"`,
         );
       }
-      if (error.code === "NoSuchBucket") {
+      if (error.code === "NoSuchBucket" || error.name === "NoSuchBucket") {
         throw new Error(
           `S3 bucket does not exist: ${this.bucketName}. Check AWS_S3_BUCKET_NAME environment variable.`,
+        );
+      }
+      if (error.name === "CredentialsError" || error.message?.includes('credentials')) {
+        throw new Error(
+          `AWS credentials error. Check AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.`,
         );
       }
 
@@ -122,9 +147,14 @@ class S3Service {
         Key: key,
         Body: buffer,
         ContentType: this.getContentType(extension, "audio/webm"),
+        // Add cache control headers for better browser compatibility
+        CacheControl: "public, max-age=3600",
+        // Add CORS headers for better cross-origin support
+        ContentDisposition: `inline; filename="${fileName || 'recording.' + extension}"`,
         Metadata: {
           sessionId,
           uploadedAt: new Date().toISOString(),
+          originalName: fileName || `recording.${extension}`,
         },
       });
 
