@@ -17,6 +17,7 @@ const { JWT_EXPIRES_IN } = require("../../../../config/constants");
 
 const json = require("../../../Traits/ApiResponser");
 const mailer = require("../../../Traits/SendEmail");
+const AuditLogService = require("../../../Services/AuditLogService");
 
 const createToken = (user) => {
   return jwt.sign(
@@ -26,7 +27,7 @@ const createToken = (user) => {
       name: user.name,
     },
     config.app.key,
-    { expiresIn: JWT_EXPIRES_IN }
+    { expiresIn: JWT_EXPIRES_IN },
   );
 };
 
@@ -48,6 +49,18 @@ o.register = async (req, res, next) => {
       role: role,
     });
     await user.save();
+    await AuditLogService.createLog({
+      user: user,
+      action: "REGISTER",
+      actionCategory: "AUTH",
+      resourceType: "User",
+      resourceId: user._id,
+      details: {
+        email: user.email,
+        role: user.role,
+      },
+      req,
+    });
     return json.successResponse(
       res,
       {
@@ -55,7 +68,7 @@ o.register = async (req, res, next) => {
         keyName: "data",
         data: { userId: user._id },
       },
-      201
+      201,
     );
   } catch (err) {
     console.error("Failed to register user:", err);
@@ -79,6 +92,21 @@ o.login = async (req, res, next) => {
     const userObject = user.toObject();
     delete userObject.password;
     const userData = { ...userObject, token };
+
+    await AuditLogService.createLog({
+      user,
+      action: "LOGIN",
+      actionCategory: "AUTH",
+      resourceType: "User",
+      resourceId: user._id,
+      details: {
+        email: user.email,
+        role: user.role,
+        loginAt: new Date(),
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -87,7 +115,7 @@ o.login = async (req, res, next) => {
         keyName: "userData",
         data: userData,
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to login:", err);
@@ -110,7 +138,7 @@ o.getUser = async (req, res, next) => {
         keyName: "userData",
         data: user,
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to get user:", err);
@@ -136,9 +164,9 @@ o.forgetPassword = async (req, res, next) => {
     const html = await ejs.renderFile(
       path.join(
         __dirname,
-        "../../../../resources/views/emails/forgot-password-email.ejs"
+        "../../../../resources/views/emails/forgot-password-email.ejs",
       ),
-      { resetPasswordCode: user.otp, baseURL: config.app.url }
+      { resetPasswordCode: user.otp, baseURL: config.app.url },
     );
 
     mailer.send(user.email, "Forget Password?", html);
@@ -150,7 +178,7 @@ o.forgetPassword = async (req, res, next) => {
         keyName: "data",
         data: { email: user.email },
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Forget Password Error:", err);
@@ -181,7 +209,7 @@ o.verifyOtp = async (req, res, next) => {
         keyName: "data",
         data: { verified: true },
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Otp Verification Error:", err);
@@ -199,8 +227,22 @@ o.resetPassword = async (req, res, next) => {
       return json.errorResponse(res, "User not found", 404);
     }
     user.password = bcrypt.hashSync(password, 5);
+    user.password_changed_at = new Date();
     await user.save();
-    
+
+    await AuditLogService.createLog({
+      user,
+      action: "RESET_PASSWORD",
+      actionCategory: "AUTH",
+      resourceType: "User",
+      resourceId: user._id,
+      details: {
+        email: user.email,
+        resetAt: new Date(),
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -208,7 +250,7 @@ o.resetPassword = async (req, res, next) => {
         keyName: "data",
         data: { success: true },
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Reset Password Error:", err);
@@ -221,10 +263,10 @@ o.resetPassword = async (req, res, next) => {
 o.getAllUsers = async (req, res, next) => {
   try {
     const { page = 1, limit = 10, search = "", active, role } = req.query;
-    
+
     // Build filter
     const filter = {};
-    
+
     // Search filter - search in name and email
     if (search) {
       filter.$or = [
@@ -232,37 +274,37 @@ o.getAllUsers = async (req, res, next) => {
         { email: { $regex: search, $options: "i" } },
       ];
     }
-    
+
     // Role filter
     if (role) {
       filter.role = role;
     }
-    
+
     // Active filter
     if (active !== undefined) {
       filter.active = active === "true" || active === true;
     }
-    
+
     // Calculate pagination
     const pageNum = parseInt(page) || 1;
     const limitNum = parseInt(limit) || 10;
     const skip = (pageNum - 1) * limitNum;
-    
+
     // Get total count
     const total = await User.countDocuments(filter);
-    
+
     // Get paginated users
     const users = await User.find(filter)
       .select("-password -otp")
       .sort({ createdAt: -1 })
       .limit(limitNum)
       .skip(skip);
-    
+
     // Calculate pagination metadata
     const totalPages = Math.ceil(total / limitNum);
     const hasNextPage = pageNum < totalPages;
     const hasPrevPage = pageNum > 1;
-    
+
     return json.successResponse(
       res,
       {
@@ -283,7 +325,7 @@ o.getAllUsers = async (req, res, next) => {
           inactive: await User.countDocuments({ ...filter, active: false }),
         },
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to fetch users:", err);
@@ -296,10 +338,10 @@ o.getAllUsers = async (req, res, next) => {
 o.getPractitionerUsers = async (req, res, next) => {
   try {
     const { page = 1, limit = 10, search = "", active } = req.query;
-    
+
     // Build filter with role = practitioner
     const filter = { role: "practitioner" };
-    
+
     // Search filter - search in name and email
     if (search) {
       filter.$or = [
@@ -307,32 +349,32 @@ o.getPractitionerUsers = async (req, res, next) => {
         { email: { $regex: search, $options: "i" } },
       ];
     }
-    
+
     // Active filter
     if (active !== undefined) {
       filter.active = active === "true" || active === true;
     }
-    
+
     // Calculate pagination
     const pageNum = parseInt(page) || 1;
     const limitNum = parseInt(limit) || 10;
     const skip = (pageNum - 1) * limitNum;
-    
+
     // Get total count
     const total = await User.countDocuments(filter);
-    
+
     // Get paginated users
     const users = await User.find(filter)
       .select("-password -otp")
       .sort({ createdAt: -1 })
       .limit(limitNum)
       .skip(skip);
-    
+
     // Calculate pagination metadata
     const totalPages = Math.ceil(total / limitNum);
     const hasNextPage = pageNum < totalPages;
     const hasPrevPage = pageNum > 1;
-    
+
     return json.successResponse(
       res,
       {
@@ -353,7 +395,7 @@ o.getPractitionerUsers = async (req, res, next) => {
           inactive: await User.countDocuments({ ...filter, active: false }),
         },
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to fetch practitioner users:", err);
@@ -374,25 +416,30 @@ o.updateProfile = async (req, res, next) => {
     }
 
     // Validation: if piiMasking is enabled, only English is allowed
-    if (piiMasking === true && language && language !== 'english') {
+    if (piiMasking === true && language && language !== "english") {
       return json.errorResponse(
         res,
         "PII Masking can only be enabled with English language",
-        400
+        400,
       );
     }
+
+    const updatedFields = [];
 
     // Update fields if provided
     if (name !== undefined && name.trim() !== "") {
       user.name = name.trim();
+      updatedFields.push("name");
     }
     if (piiMasking !== undefined) {
       user.piiMasking = piiMasking;
+      updatedFields.push("piiMasking");
     }
     if (language !== undefined) {
       user.language = language;
+      updatedFields.push("language");
       // Auto-disable PII masking if language is not English
-      if (language !== 'english') {
+      if (language !== "english") {
         user.piiMasking = false;
       }
     }
@@ -400,6 +447,19 @@ o.updateProfile = async (req, res, next) => {
     await user.save();
 
     const updatedUser = await User.findById(_id).select("-password");
+
+    await AuditLogService.createLog({
+      user,
+      action: "UPDATE_PROFILE",
+      actionCategory: "USER",
+      resourceType: "User",
+      resourceId: user._id,
+      details: {
+        updatedFields,
+        updatedAt: new Date(),
+      },
+      req,
+    });
 
     return json.successResponse(
       res,
@@ -409,7 +469,7 @@ o.updateProfile = async (req, res, next) => {
         keyName: "user",
         data: updatedUser,
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to update profile:", err);
@@ -428,7 +488,7 @@ o.updatePassword = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Current password and new password are required",
-        400
+        400,
       );
     }
 
@@ -436,7 +496,7 @@ o.updatePassword = async (req, res, next) => {
       return json.errorResponse(
         res,
         "New password must be at least 6 characters long",
-        400
+        400,
       );
     }
 
@@ -456,6 +516,19 @@ o.updatePassword = async (req, res, next) => {
     user.password_changed_at = new Date();
     await user.save();
 
+    await AuditLogService.createLog({
+      user,
+      action: "UPDATE_PASSWORD",
+      actionCategory: "AUTH",
+      resourceType: "User",
+      resourceId: user._id,
+      details: {
+        email: user.email,
+        changedAt: new Date(),
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -463,7 +536,7 @@ o.updatePassword = async (req, res, next) => {
         keyName: "data",
         data: null,
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to update password:", err);
@@ -483,7 +556,7 @@ o.createUserByAdmin = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Name, email, password, and role are required",
-        400
+        400,
       );
     }
 
@@ -492,14 +565,18 @@ o.createUserByAdmin = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Role must be either 'admin' or 'practitioner'",
-        400
+        400,
       );
     }
 
     // Check if user already exists
     const existingUser = await User.findOne({ email: email });
     if (existingUser) {
-      return json.errorResponse(res, "User with this email already exists", 400);
+      return json.errorResponse(
+        res,
+        "User with this email already exists",
+        400,
+      );
     }
 
     // Hash password
@@ -516,6 +593,19 @@ o.createUserByAdmin = async (req, res, next) => {
 
     await user.save();
 
+    await AuditLogService.createLog({
+      user: user,
+      action: "REGISTER",
+      actionCategory: "AUTH",
+      resourceType: "User",
+      resourceId: user._id,
+      details: {
+        email: user.email,
+        role: user.role,
+      },
+      req,
+    });
+
     const userObject = user.toObject();
     delete userObject.password;
 
@@ -526,7 +616,7 @@ o.createUserByAdmin = async (req, res, next) => {
         keyName: "user",
         data: userObject,
       },
-      201
+      201,
     );
   } catch (err) {
     console.error("Failed to create user by admin:", err);
@@ -565,7 +655,7 @@ o.updateUserCredentials = async (req, res, next) => {
         return json.errorResponse(
           res,
           "Email already in use by another user",
-          400
+          400,
         );
       }
       user.email = email;
@@ -583,7 +673,7 @@ o.updateUserCredentials = async (req, res, next) => {
         return json.errorResponse(
           res,
           "Role must be either 'admin' or 'practitioner'",
-          400
+          400,
         );
       }
       user.role = role;
@@ -594,6 +684,23 @@ o.updateUserCredentials = async (req, res, next) => {
     const userObject = user.toObject();
     delete userObject.password;
 
+    // Get the admin user who made this change
+    const adminUser = await User.findById(req.decoded._id);
+
+    await AuditLogService.createLog({
+      user: adminUser,
+      action: "UPDATE_CREDENTIALS",
+      actionCategory: "ADMIN",
+      resourceType: "User",
+      resourceId: user._id,
+      details: {
+        targetUserEmail: user.email,
+        updatedFields: Object.keys(req.body),
+        updatedAt: new Date(),
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -601,7 +708,7 @@ o.updateUserCredentials = async (req, res, next) => {
         keyName: "user",
         data: userObject,
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to update user credentials:", err);
@@ -627,7 +734,7 @@ o.toggleUserStatus = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Active parameter must be a boolean (true/false)",
-        400
+        400,
       );
     }
 
@@ -642,13 +749,34 @@ o.toggleUserStatus = async (req, res, next) => {
       return json.errorResponse(
         res,
         "You cannot disable your own account",
-        400
+        400,
       );
     }
+
+    const previousStatus = user.active;
 
     // Update active status
     user.active = active;
     await user.save();
+
+    // Get the admin user who made this change
+    const adminUser = await User.findById(req.decoded._id);
+
+    await AuditLogService.createLog({
+      user: adminUser,
+      action: "TOGGLE_STATUS",
+      actionCategory: "ADMIN",
+      resourceType: "User",
+      resourceId: user._id,
+      details: {
+        targetUserEmail: user.email,
+        previousStatus,
+        newStatus: active,
+        actionBy: adminUser.name,
+        changedAt: new Date(),
+      },
+      req,
+    });
 
     const userObject = user.toObject();
     delete userObject.password;
@@ -662,7 +790,7 @@ o.toggleUserStatus = async (req, res, next) => {
         keyName: "user",
         data: userObject,
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to toggle user status:", err);
@@ -673,4 +801,3 @@ o.toggleUserStatus = async (req, res, next) => {
 };
 
 module.exports = o;
-    

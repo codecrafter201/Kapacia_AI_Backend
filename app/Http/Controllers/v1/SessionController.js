@@ -10,6 +10,7 @@ const timelineCtrl = require("./CaseTimelineController");
 const s3Service = require("../../../Services/S3Service");
 
 const json = require("../../../Traits/ApiResponser");
+const AuditLogService = require("../../../Services/AuditLogService");
 
 let o = {};
 
@@ -93,6 +94,21 @@ o.createSession = async (req, res, next) => {
       console.error("Failed to create timeline entry:", timelineErr);
     }
 
+    await AuditLogService.createLog({
+      user,
+      action: "CREATE",
+      actionCategory: "SESSION",
+      resourceType: "Session",
+      resourceId: newSession._id,
+      caseId: newSession.case,
+      sessionId: newSession._id,
+      details: {
+        sessionNumber: newSession.sessionNumber,
+        sessionDate: newSession.sessionDate,
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -166,6 +182,27 @@ o.updateSession = async (req, res, next) => {
       { path: "createdBy", select: "-password" },
     ]);
 
+    await AuditLogService.createLog({
+      user,
+      action: "UPDATE_SESSION",
+      actionCategory: "SESSION",
+      resourceType: "Session",
+      resourceId: session._id,
+      caseId: session.case,
+      sessionId: session._id,
+      details: {
+        updatedAt: new Date(),
+        sessionDate: session.sessionDate,
+        language: session.language,
+        piiMaskingEnabled: session.piiMaskingEnabled,
+        piiWarningAcknowledged: session.piiWarningAcknowledged,
+        consentGiven: session.consentGiven,
+        consentTimestamp: session.consentTimestamp,
+        status: session.status,
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -224,6 +261,20 @@ o.startRecording = async (req, res, next) => {
       { path: "case", select: "displayName internalRef status" },
       { path: "createdBy", select: "-password" },
     ]);
+
+    await AuditLogService.createLog({
+      user,
+      action: "START_RECORDING",
+      actionCategory: "SESSION",
+      resourceType: "Session",
+      resourceId: session._id,
+      caseId: session.case,
+      sessionId: session._id,
+      details: {
+        startedAt: new Date(),
+      },
+      req,
+    });
 
     return json.successResponse(
       res,
@@ -292,6 +343,23 @@ o.stopRecording = async (req, res, next) => {
       { path: "case", select: "displayName internalRef status" },
       { path: "createdBy", select: "-password" },
     ]);
+
+    await AuditLogService.createLog({
+      user,
+      action: "STOP_RECORDING",
+      actionCategory: "SESSION",
+      resourceType: "Session",
+      resourceId: session._id,
+      caseId: session.case,
+      sessionId: session._id,
+      details: {
+        stoppedAt: new Date(),
+        audioUrl: session.audioUrl,
+        audioFileSizeBytes: session.audioFileSizeBytes,
+        durationSeconds: session.durationSeconds,
+      },
+      req,
+    });
 
     return json.successResponse(
       res,
@@ -494,6 +562,21 @@ o.deleteSession = async (req, res, next) => {
       { $pull: { sessionsIncluded: id } },
     );
 
+    await AuditLogService.createLog({
+      user,
+      action: "DELETE",
+      actionCategory: "SESSION",
+      resourceType: "Session",
+      resourceId: req.params.id,
+      caseId: session.case,
+      sessionId: req.params.id,
+      details: {
+        sessionNumber: session.sessionNumber,
+        deletedAt: new Date(),
+      },
+      req,
+    });
+
     await Session.findByIdAndDelete(id);
 
     return json.successResponse(
@@ -587,6 +670,23 @@ o.uploadRecording = async (req, res, next) => {
         { path: "createdBy", select: "-password" },
       ]);
 
+      await AuditLogService.createLog({
+        user,
+        action: "UPLOAD_RECORDING",
+        actionCategory: "SESSION",
+        resourceType: "Session",
+        resourceId: session._id,
+        caseId: session.case,
+        sessionId: session._id,
+        details: {
+          uploadedAt: new Date(),
+          audioUrl: session.audioUrl,
+          audioFileSizeBytes: session.audioFileSizeBytes,
+          durationSeconds: session.durationSeconds,
+        },
+        req,
+      });
+
       return json.successResponse(
         res,
         {
@@ -648,7 +748,7 @@ o.getPresignedAudioUrl = async (req, res, next) => {
 
     // Determine key - prefer audioS3Key as it's the source of truth
     let key = session.audioS3Key;
-    
+
     console.log(`[getPresignedAudioUrl] Session audio details:`, {
       sessionId: id,
       audioS3Key: session.audioS3Key ? "✓ Present" : "✗ Missing",
@@ -684,7 +784,7 @@ o.getPresignedAudioUrl = async (req, res, next) => {
 
     // Default 15 minutes, but allow longer expiry via env var
     const expiresIn = parseInt(process.env.S3_PRESIGN_EXPIRY || "900", 10);
-    
+
     console.log(
       `[getPresignedAudioUrl] Generating presigned URL (expires in ${expiresIn}s)`,
     );
@@ -707,14 +807,11 @@ o.getPresignedAudioUrl = async (req, res, next) => {
       200,
     );
   } catch (err) {
-    console.error(
-      `[getPresignedAudioUrl] Error generating presigned URL:`,
-      {
-        error: err.message,
-        code: err.code,
-        stack: err.stack,
-      },
-    );
+    console.error(`[getPresignedAudioUrl] Error generating presigned URL:`, {
+      error: err.message,
+      code: err.code,
+      stack: err.stack,
+    });
     const errorMessage =
       err.message || err.toString() || "Failed to generate presigned URL";
     return json.errorResponse(res, errorMessage, 500);

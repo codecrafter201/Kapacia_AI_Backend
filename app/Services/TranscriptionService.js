@@ -31,9 +31,6 @@ class TranscriptionService {
     });
 
     this.sessions = new Map();
-    console.log(
-      `[TranscriptionService] Initialized with region: ${process.env.AWS_REGION || "us-east-1"}`,
-    );
   }
 
   /**
@@ -55,7 +52,7 @@ class TranscriptionService {
     let piiMaskingEnabled = false;
     let languageCode = "en-US";
     let sessionLanguage = "english";
-    
+
     try {
       console.log(`[${sessionId}] Starting transcription session`);
 
@@ -86,7 +83,7 @@ class TranscriptionService {
         params.ContentRedactionType = "PII";
         // Don't specify PiiEntityTypes - let AWS redact all PII types by default
         // This is more reliable for streaming transcription
-        
+
         console.log(
           `[${sessionId}] AWS PII redaction configured (all PII types)`,
         );
@@ -112,8 +109,8 @@ class TranscriptionService {
         ShowSpeakerLabel: params.ShowSpeakerLabel,
         MaxSpeakerLabels: params.MaxSpeakerLabels,
         EnableChannelIdentification: params.EnableChannelIdentification,
-        ContentRedactionType: params.ContentRedactionType || 'None',
-        PiiRedactionEnabled: !!params.ContentRedactionType
+        ContentRedactionType: params.ContentRedactionType || "None",
+        PiiRedactionEnabled: !!params.ContentRedactionType,
       });
 
       // Prepare session before calling AWS so early audio chunks are not dropped
@@ -170,42 +167,54 @@ class TranscriptionService {
       return { success: true };
     } catch (error) {
       console.error(`[${sessionId}] Failed to start transcription:`, error);
-      
+
       // Check if this is a PII redaction related error
-      if (piiMaskingEnabled && (error.message?.includes('PII') || error.message?.includes('ContentRedaction'))) {
-        console.error(`[${sessionId}] PII redaction error detected. Trying without PII redaction...`);
-        
+      if (
+        piiMaskingEnabled &&
+        (error.message?.includes("PII") ||
+          error.message?.includes("ContentRedaction"))
+      ) {
+        console.error(
+          `[${sessionId}] PII redaction error detected. Trying without PII redaction...`,
+        );
+
         // Try again without PII redaction as fallback
         try {
           const fallbackParams = { ...params };
           delete fallbackParams.ContentRedactionType;
           delete fallbackParams.PiiEntityTypes;
-          
+
           console.log(`[${sessionId}] Retrying without PII redaction...`);
-          const fallbackCommand = new StartStreamTranscriptionCommand(fallbackParams);
+          const fallbackCommand = new StartStreamTranscriptionCommand(
+            fallbackParams,
+          );
           const fallbackResponse = await this.client.send(fallbackCommand);
-          
+
           const session = this.sessions.get(sessionId);
           if (session) {
             session.response = fallbackResponse;
             session.isActive = true;
             session.awsPiiRedactionEnabled = false; // Mark as disabled
           }
-          
-          console.log(`[${sessionId}] Fallback transcription started successfully (PII redaction disabled)`);
-          
-          this.processTranscriptionStream(sessionId, fallbackResponse.TranscriptResultStream);
-          
+
+          console.log(
+            `[${sessionId}] Fallback transcription started successfully (PII redaction disabled)`,
+          );
+
+          this.processTranscriptionStream(
+            sessionId,
+            fallbackResponse.TranscriptResultStream,
+          );
+
           socket.emit("transcript", {
             type: "status",
             status: "Transcription started - PII redaction unavailable",
             piiMaskingEnabled: false,
             awsPiiRedactionEnabled: false,
-            fallbackMode: true
+            fallbackMode: true,
           });
-          
+
           return { success: true, fallbackMode: true };
-          
         } catch (fallbackError) {
           console.error(`[${sessionId}] Fallback also failed:`, fallbackError);
         }
@@ -505,7 +514,10 @@ class TranscriptionService {
     }
   }
 
-  async persistTranscriptSegment(sessionId, { transcript, speaker, timestamp, piiDetected }) {
+  async persistTranscriptSegment(
+    sessionId,
+    { transcript, speaker, timestamp, piiDetected },
+  ) {
     try {
       const sessionState = this.sessions.get(sessionId);
 

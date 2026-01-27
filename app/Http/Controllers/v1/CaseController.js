@@ -10,6 +10,7 @@ const Transcript = mongoose.model("Transcript");
 const Soap = mongoose.model("Soap");
 
 const json = require("../../../Traits/ApiResponser");
+const AuditLogService = require("../../../Services/AuditLogService");
 
 const VALID_STATUSES = ["Active", "Closed", "OnHold", "Unapporved"];
 
@@ -181,7 +182,9 @@ o.exportCase = async (req, res, next) => {
 
     let transcripts = [];
     if (includeTranscripts) {
-      transcripts = await Transcript.find({ session: { $in: sessionIdsToInclude } })
+      transcripts = await Transcript.find({
+        session: { $in: sessionIdsToInclude },
+      })
         .populate("session", "sessionNumber sessionDate status")
         .lean();
     }
@@ -225,6 +228,20 @@ o.exportCase = async (req, res, next) => {
     const filename = `${caseData.internalRef || "case"}-export.json`;
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    await AuditLogService.createLog({
+      user,
+      action: "EXPORT",
+      actionCategory: "CASE",
+      resourceType: "Case",
+      resourceId: req.params.caseId,
+      caseId: req.params.caseId,
+      details: {
+        exportFormat: "JSON",
+        exportedAt: new Date(),
+      },
+      req,
+    });
 
     return res.status(200).send(JSON.stringify(payload, null, 2));
   } catch (err) {
@@ -279,6 +296,22 @@ o.createCase = async (req, res, next) => {
 
     await newCase.save();
 
+    const adminUser = await mongoose.model("User").findById(adminId);
+    await AuditLogService.createLog({
+      user: adminUser,
+      action: "CREATE",
+      actionCategory: "CASE",
+      resourceType: "Case",
+      resourceId: newCase._id,
+      caseId: newCase._id,
+      details: {
+        displayName: newCase.displayName,
+        internalRef: newCase.internalRef,
+        assignedTo: assignedUser.email,
+      },
+      req,
+    });
+
     // Populate assignedTo and createdBy user details
     await newCase.populate([
       { path: "assignedTo", select: "-password" },
@@ -324,6 +357,21 @@ o.createCaseSelf = async (req, res, next) => {
     });
 
     await newCase.save();
+
+    const user = await mongoose.model("User").findById(userId);
+    await AuditLogService.createLog({
+      user,
+      action: "CREATE",
+      actionCategory: "CASE",
+      resourceType: "Case",
+      resourceId: newCase._id,
+      caseId: newCase._id,
+      details: {
+        displayName: newCase.displayName,
+        internalRef: newCase.internalRef,
+      },
+      req,
+    });
 
     await newCase.populate([
       { path: "assignedTo", select: "-password" },
@@ -566,6 +614,22 @@ o.updateCase = async (req, res, next) => {
     }
 
     await caseData.save();
+
+    const user = await mongoose.model("User").findById(req.decoded._id);
+    await AuditLogService.createLog({
+      user,
+      action: "UPDATE",
+      actionCategory: "CASE",
+      resourceType: "Case",
+      resourceId: caseData._id,
+      caseId: caseData._id,
+      details: {
+        updatedFields: Object.keys(req.body),
+        newStatus: caseData.status,
+      },
+      req,
+    });
+
     await caseData.populate([
       { path: "assignedTo", select: "-password" },
       { path: "createdBy", select: "-password" },
@@ -596,6 +660,22 @@ o.deleteCase = async (req, res, next) => {
     if (!caseData) {
       return json.errorResponse(res, "Case not found", 404);
     }
+
+    const user = await mongoose.model("User").findById(req.decoded._id);
+    await AuditLogService.createLog({
+      user,
+      action: "DELETE",
+      actionCategory: "CASE",
+      resourceType: "Case",
+      resourceId: req.params.id,
+      caseId: req.params.id,
+      details: {
+        displayName: caseData.displayName,
+        internalRef: caseData.internalRef,
+        deletedAt: new Date(),
+      },
+      req,
+    });
 
     await Case.findByIdAndDelete(id);
 

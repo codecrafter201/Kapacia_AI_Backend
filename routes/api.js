@@ -31,6 +31,8 @@ const timelineSummaryCtrl = require("../app/Http/Controllers/v1/TimelineSummaryC
 const caseTimelineCtrl = require("../app/Http/Controllers/v1/CaseTimelineController");
 const soapCtrl = require("../app/Http/Controllers/v1/SoapController");
 const transcriptCtrl = require("../app/Http/Controllers/v1/TranscriptController");
+const auditLogCtrl = require("../app/Http/Controllers/v1/AuditLogController");
+const backupCtrl = require("../app/Http/Controllers/v1/BackupController");
 
 const app = express.Router();
 
@@ -218,5 +220,29 @@ app.group("/transcript", (Route) => {
   Route.put("/:id", authCtrl.authenticate, transcriptCtrl.updateTranscript);
   Route.delete("/:id", authCtrl.authenticate, transcriptCtrl.deleteTranscript);
 });
+
+app.group("/audit-logs", (Route) => {
+  Route.get("/", authCtrl.authenticateAdmin, auditLogCtrl.getAllAuditLogs);
+  Route.get("/export", authCtrl.authenticateAdmin, auditLogCtrl.exportAuditLogs);
+  Route.get(
+    "/case/:caseId",
+    authCtrl.authenticateAdmin,
+    auditLogCtrl.getCaseAuditLogs,
+  );
+  Route.get(
+    "/user/:userId",
+    authCtrl.authenticateAdmin,
+    auditLogCtrl.getUserAuditLogs,
+  );
+  Route.get(
+    "/session/:sessionId",
+    authCtrl.authenticateAdmin,
+    auditLogCtrl.getSessionAuditLogs,
+  );
+});
+app.group("/backup", (Route) => {
+  Route.get("/", authCtrl.authenticateAdmin, backupCtrl.backupAllData);
+});
+
 
 module.exports = app;

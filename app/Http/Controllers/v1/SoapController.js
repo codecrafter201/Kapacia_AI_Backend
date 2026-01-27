@@ -8,6 +8,7 @@ const Transcript = mongoose.model("Transcript");
 
 const json = require("../../../Traits/ApiResponser");
 const bedrockService = require("../../../Services/BedrockService");
+const AuditLogService = require("../../../Services/AuditLogService");
 
 let o = {};
 
@@ -123,6 +124,23 @@ o.createSoapNote = async (req, res, next) => {
       maskingMetadata,
     });
 
+    const user = await mongoose.model("User").findById(userId);
+    await AuditLogService.createLog({
+      user,
+      action: "CREATE",
+      actionCategory: "SOAP",
+      resourceType: "Soap",
+      resourceId: soapNote._id,
+      caseId: session.case,
+      sessionId: session._id,
+      details: {
+        framework: soapNote.framework,
+        version: soapNote.version,
+        createdAt: new Date(),
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -215,6 +233,25 @@ o.generateSoapNoteFromTranscript = async (req, res, next) => {
       maskingMetadata,
     });
 
+    const user = await mongoose.model("User").findById(userId);
+    await AuditLogService.createLog({
+      user,
+      action: "GENERATE",
+      actionCategory: "SOAP",
+      resourceType: "Soap",
+      resourceId: soapNote._id,
+      caseId: session.case,
+      sessionId: session._id,
+      details: {
+        generatedFrom: "transcript",
+        framework: soapNote.framework,
+        version: soapNote.version,
+        modelId: aiResult.modelId,
+        generatedAt: new Date(),
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -256,7 +293,7 @@ o.updateSoapNote = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Cannot edit an approved SOAP note. Create a new version instead.",
-        400
+        400,
       );
     }
 
@@ -271,7 +308,7 @@ o.updateSoapNote = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Access denied. You are not assigned to this case.",
-        403
+        403,
       );
     }
 
@@ -294,6 +331,22 @@ o.updateSoapNote = async (req, res, next) => {
       { path: "approvedBy", select: "-password" },
     ]);
 
+    await AuditLogService.createLog({
+      user,
+      action: "UPDATE",
+      actionCategory: "SOAP",
+      resourceType: "Soap",
+      resourceId: soapNote._id,
+      caseId: soapNote.session.case,
+      sessionId: soapNote.session,
+      details: {
+        updatedFields: Object.keys(req.body),
+        newStatus: soapNote.status,
+        updatedAt: new Date(),
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -301,7 +354,7 @@ o.updateSoapNote = async (req, res, next) => {
         keyName: "soapNote",
         data: soapNote,
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to update SOAP note:", err);
@@ -341,7 +394,7 @@ o.approveSoapNote = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Access denied. You are not assigned to this case.",
-        403
+        403,
       );
     }
 
@@ -360,6 +413,21 @@ o.approveSoapNote = async (req, res, next) => {
       { path: "approvedBy", select: "-password" },
     ]);
 
+    await AuditLogService.createLog({
+      user,
+      action: "APPROVE",
+      actionCategory: "SOAP",
+      resourceType: "Soap",
+      resourceId: soapNote._id,
+      caseId: soapNote.session.case,
+      sessionId: soapNote.session,
+      details: {
+        approvedAt: soapNote.approvedAt,
+        approvedBy: user.name,
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -367,7 +435,7 @@ o.approveSoapNote = async (req, res, next) => {
         keyName: "soapNote",
         data: soapNote,
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to approve SOAP note:", err);
@@ -399,7 +467,7 @@ o.getSoapNotesBySession = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Access denied. You are not assigned to this case.",
-        403
+        403,
       );
     }
 
@@ -432,7 +500,7 @@ o.getSoapNotesBySession = async (req, res, next) => {
           approved: soapNotes.filter((n) => n.status === "Approved").length,
         },
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to fetch SOAP notes:", err);
@@ -471,7 +539,7 @@ o.getSoapNoteById = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Access denied. You are not assigned to this case.",
-        403
+        403,
       );
     }
 
@@ -482,7 +550,7 @@ o.getSoapNoteById = async (req, res, next) => {
         keyName: "soapNote",
         data: soapNote,
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to fetch SOAP note:", err);
@@ -511,7 +579,7 @@ o.deleteSoapNote = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Cannot delete an approved SOAP note",
-        400
+        400,
       );
     }
 
@@ -526,7 +594,7 @@ o.deleteSoapNote = async (req, res, next) => {
       return json.errorResponse(
         res,
         "Access denied. You are not assigned to this case.",
-        403
+        403,
       );
     }
 
@@ -543,6 +611,22 @@ o.deleteSoapNote = async (req, res, next) => {
       }
     }
 
+    await AuditLogService.createLog({
+      user,
+      action: "DELETE",
+      actionCategory: "SOAP",
+      resourceType: "Soap",
+      resourceId: soapNote._id,
+      caseId: soapNote.session.case,
+      sessionId: soapNote.session,
+      details: {
+        framework: soapNote.framework,
+        version: soapNote.version,
+        deletedAt: new Date(),
+      },
+      req,
+    });
+
     await Soap.findByIdAndDelete(id);
 
     return json.successResponse(
@@ -552,7 +636,7 @@ o.deleteSoapNote = async (req, res, next) => {
         keyName: "data",
         data: { id },
       },
-      200
+      200,
     );
   } catch (err) {
     console.error("Failed to delete SOAP note:", err);

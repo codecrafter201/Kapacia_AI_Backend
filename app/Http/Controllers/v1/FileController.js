@@ -8,6 +8,7 @@ const s3Service = require("../../../Services/S3Service");
 const timelineCtrl = require("./CaseTimelineController");
 
 const json = require("../../../Traits/ApiResponser");
+const AuditLogService = require("../../../Services/AuditLogService");
 
 let o = {};
 
@@ -89,6 +90,21 @@ o.uploadFile = async (req, res, next) => {
     } catch (countErr) {
       console.error("Failed to update file count:", countErr);
     }
+
+    await AuditLogService.createLog({
+      user,
+      action: "UPLOAD",
+      actionCategory: "FILE",
+      resourceType: "File",
+      resourceId: newFile._id,
+      caseId: newFile.case,
+      details: {
+        fileName: newFile.fileName,
+        mimeType: newFile.mimeType,
+        fileSizeBytes: newFile.fileSizeBytes,
+      },
+      req,
+    });
 
     return json.successResponse(
       res,
@@ -299,6 +315,20 @@ o.deleteFile = async (req, res, next) => {
     } catch (countErr) {
       console.error("Failed to update file count:", countErr);
     }
+
+    await AuditLogService.createLog({
+      user,
+      action: "DELETE",
+      actionCategory: "FILE",
+      resourceType: "File",
+      resourceId: req.params.id,
+      caseId: file.case,
+      details: {
+        fileName: file.fileName,
+        deletedAt: new Date(),
+      },
+      req,
+    });
 
     await File.findByIdAndDelete(id);
 

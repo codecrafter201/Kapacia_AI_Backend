@@ -9,6 +9,7 @@ const caseTimelineCtrl = require("./CaseTimelineController");
 const bedrockService = require("../../../Services/BedrockService");
 
 const json = require("../../../Traits/ApiResponser");
+const AuditLogService = require("../../../Services/AuditLogService");
 
 let o = {};
 
@@ -120,6 +121,22 @@ o.createTimelineSummary = async (req, res, next) => {
     } catch (timelineErr) {
       console.error("Failed to create timeline entry:", timelineErr);
     }
+
+    await AuditLogService.createLog({
+      user,
+      action: "CREATE",
+      actionCategory: "TIMELINE_SUMMARY",
+      resourceType: "TimelineSummary",
+      resourceId: timelineSummary._id,
+      caseId: timelineSummary.case,
+      details: {
+        version,
+        sessionCount: sessions.length,
+        fileCount: files.length,
+        createdAt: new Date(),
+      },
+      req,
+    });
 
     return json.successResponse(
       res,
@@ -282,6 +299,21 @@ o.updateTimelineSummary = async (req, res, next) => {
       { path: "approvedBy", select: "-password" },
     ]);
 
+    await AuditLogService.createLog({
+      user,
+      action: "UPDATE",
+      actionCategory: "TIMELINE_SUMMARY",
+      resourceType: "TimelineSummary",
+      resourceId: summary._id,
+      caseId: summary.case._id,
+      details: {
+        updatedFields: [],
+        newStatus: summary.status,
+        updatedAt: new Date(),
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -334,6 +366,21 @@ o.approveTimelineSummary = async (req, res, next) => {
       { path: "approvedBy", select: "-password" },
     ]);
 
+    await AuditLogService.createLog({
+      user,
+      action: "APPROVE",
+      actionCategory: "TIMELINE_SUMMARY",
+      resourceType: "TimelineSummary",
+      resourceId: summary._id,
+      caseId: summary.case._id,
+      details: {
+        approvedAt: new Date(),
+        approvedBy: user.name,
+        locked: true,
+      },
+      req,
+    });
+
     return json.successResponse(
       res,
       {
@@ -384,6 +431,20 @@ o.deleteTimelineSummary = async (req, res, next) => {
     }
 
     await TimelineSummary.findByIdAndDelete(id);
+
+    await AuditLogService.createLog({
+      user,
+      action: "DELETE",
+      actionCategory: "TIMELINE_SUMMARY",
+      resourceType: "TimelineSummary",
+      resourceId: id,
+      caseId: summary.case._id,
+      details: {
+        deletedAt: new Date(),
+        version: summary.version,
+      },
+      req,
+    });
 
     return json.successResponse(
       res,
@@ -705,6 +766,23 @@ o.generateTimelineSummaryWithAI = async (req, res, next) => {
       "[TimelineSummary AI] Summary generated successfully, version:",
       version,
     );
+
+    await AuditLogService.createLog({
+      user,
+      action: "GENERATE",
+      actionCategory: "TIMELINE_SUMMARY",
+      resourceType: "TimelineSummary",
+      resourceId: timelineSummary._id,
+      caseId: timelineSummary.case,
+      details: {
+        version,
+        sessionCount: enrichedSessions.length,
+        fileCount: files.length,
+        modelUsed: aiGenerated.modelId,
+        generatedAt: new Date(),
+      },
+      req,
+    });
 
     return json.successResponse(
       res,
