@@ -33,6 +33,52 @@ global.io = require("socket.io")(http, {
   transports: ["websocket", "polling"],
 });
 require("./routes/socket");
+
+/**
+ * Initialize Data Retention Scheduled Job
+ * Runs daily at 2 AM to check and enforce data retention policies
+ */
+function initializeDataRetentionJob() {
+  const cron = require("node-cron");
+  const DataRetentionService = require("./app/Services/DataRetentionService");
+
+  const cronSchedule = "0 2 * * *";
+
+  cron.schedule(cronSchedule, async () => {
+    console.log(
+      `[DataRetention] Running scheduled retention check at ${new Date().toISOString()}`,
+    );
+    try {
+      const results = await DataRetentionService.runCompleteRetentionCheck();
+      console.log("[DataRetention] Scheduled check completed:", {
+        scheduled: results.schedulingResults?.totalScheduled || 0,
+        deleted: results.deletionResults?.totalProcessed || 0,
+      });
+    } catch (error) {
+      console.error("[DataRetention] Scheduled check failed:", error);
+    }
+  });
+
+  console.log(
+    `[DataRetention] Scheduled job initialized - runs daily at 2:00 AM`,
+  );
+
+  // Optional: Run once on startup for immediate check (useful for testing)
+  if (process.env.RUN_RETENTION_ON_STARTUP === "true") {
+    console.log(
+      "[DataRetention] Running initial retention check on startup...",
+    );
+    setTimeout(async () => {
+      try {
+        await DataRetentionService.runCompleteRetentionCheck();
+        console.log("[DataRetention] Startup retention check completed");
+      } catch (error) {
+        console.error("[DataRetention] Startup retention check failed:", error);
+      }
+    }, 5000); // Wait 5 seconds for server to fully initialize
+  }
+}
+
 /**
  * On Database Connection.
  */
@@ -63,6 +109,9 @@ mongoose.connection
     });
     app.on("error", onError);
     app.on("listening", onListening);
+
+    // Initialize Data Retention Cron Job
+    initializeDataRetentionJob();
   });
 
 /**

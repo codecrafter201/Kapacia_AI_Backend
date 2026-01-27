@@ -41,6 +41,16 @@ const sessionSchema = new mongoose.Schema(
     errorMessage: { type: String },
     speechmaticsJobId: { type: String },
 
+    // Data Retention Fields
+    deletionScheduledAt: { type: Date }, // When audio/transcript should be deleted
+    retentionStatus: {
+      type: String,
+      enum: ["Active", "ScheduledForDeletion", "Deleted"],
+      default: "Active",
+    },
+    audioDeletedAt: { type: Date }, // Track when audio was actually deleted
+    transcriptDeletedAt: { type: Date }, // Track when transcript was deleted
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

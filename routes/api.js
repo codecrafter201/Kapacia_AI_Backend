@@ -33,6 +33,7 @@ const soapCtrl = require("../app/Http/Controllers/v1/SoapController");
 const transcriptCtrl = require("../app/Http/Controllers/v1/TranscriptController");
 const auditLogCtrl = require("../app/Http/Controllers/v1/AuditLogController");
 const backupCtrl = require("../app/Http/Controllers/v1/BackupController");
+const dataRetentionCtrl = require("../app/Http/Controllers/v1/DataRetentionController");
 
 const app = express.Router();
 
@@ -242,6 +243,24 @@ app.group("/audit-logs", (Route) => {
 });
 app.group("/backup", (Route) => {
   Route.get("/", authCtrl.authenticateAdmin, backupCtrl.backupAllData);
+});
+
+app.group("/data-retention", (Route) => {
+  Route.post(
+    "/run-check",
+    authCtrl.authenticateAdmin,
+    dataRetentionCtrl.runRetentionCheck,
+  );
+  Route.get(
+    "/summary",
+    authCtrl.authenticateAdmin,
+    dataRetentionCtrl.getRetentionSummary,
+  );
+  Route.get(
+    "/session/:sessionId/status",
+    authCtrl.authenticate,
+    dataRetentionCtrl.getSessionRetentionStatus,
+  );
 });
 
 

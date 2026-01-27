@@ -8,6 +8,7 @@ const Transcript = mongoose.model("Transcript");
 
 const json = require("../../../Traits/ApiResponser");
 const bedrockService = require("../../../Services/BedrockService");
+const DataRetentionService = require("../../../Services/DataRetentionService");
 const AuditLogService = require("../../../Services/AuditLogService");
 
 let o = {};
@@ -404,6 +405,23 @@ o.approveSoapNote = async (req, res, next) => {
     soapNote.approvedAt = new Date();
 
     await soapNote.save();
+
+    // Schedule data retention: delete audio/transcript 7 days after approval
+    try {
+      await DataRetentionService.schedulePostApprovalDeletion(
+        soapNote.session._id,
+      );
+      console.log(
+        `[SoapController] Scheduled data retention for session ${soapNote.session._id}`,
+      );
+    } catch (retentionError) {
+      // Log error but don't fail the approval
+      console.error(
+        "[SoapController] Failed to schedule data retention:",
+        retentionError,
+      );
+    }
+
     await soapNote.populate([
       {
         path: "session",
