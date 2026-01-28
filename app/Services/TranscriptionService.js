@@ -89,17 +89,13 @@ class TranscriptionService {
         );
       }
 
-      // Enhanced speaker diarization settings for better accuracy
-      if (options.showSpeakerLabel !== false) {
-        params.ShowSpeakerLabel = true;
+      // Force speaker diarization to 2 speakers for consistent labeling
+      params.ShowSpeakerLabel = true;
+      params.MaxSpeakerLabels = 2; // Hard-coded to 2 speakers
 
-        // Set exact number of speakers for better accuracy (default: 2)
-        params.MaxSpeakerLabels = options.maxSpeakers || 2;
-
-        // Enable channel identification if stereo/multi-channel audio
-        if (options.enableChannelIdentification) {
-          params.EnableChannelIdentification = true;
-        }
+      // Enable channel identification only if explicitly requested
+      if (options.enableChannelIdentification) {
+        params.EnableChannelIdentification = true;
       }
 
       console.log(`[${sessionId}] AWS Transcribe config:`, {
@@ -130,6 +126,9 @@ class TranscriptionService {
         speakerTimings: {}, // Track speaker durations
         lastSpeaker: null,
         lastSpeakerTime: null,
+        // Mapping from AWS speaker IDs to local speaker numbers (1..2)
+        speakerIdMap: {},
+        nextSpeakerNumber: 1,
         // PII tracking (AWS will handle the actual redaction)
         piiDetectedCount: 0,
         piiEntitiesByType: {},
@@ -423,7 +422,30 @@ class TranscriptionService {
                     (a, b) => (speakerCount[a] > speakerCount[b] ? a : b),
                   );
 
-                  speaker = `Speaker ${mostCommonSpeaker}`;
+                  // Normalize/mapping: ensure only two speaker labels are used
+                  // Use session mapping to assign the first-seen AWS speaker ID -> Speaker 1,
+                  // second distinct AWS speaker ID -> Speaker 2, any further IDs map to an existing bucket.
+                  const sessionState = session;
+                  if (!sessionState.speakerIdMap) {
+                    sessionState.speakerIdMap = {};
+                    sessionState.nextSpeakerNumber = 1;
+                  }
+
+                  let mappedNumber = sessionState.speakerIdMap[mostCommonSpeaker];
+                  if (!mappedNumber) {
+                    if (sessionState.nextSpeakerNumber <= 2) {
+                      mappedNumber = sessionState.nextSpeakerNumber;
+                      sessionState.speakerIdMap[mostCommonSpeaker] = mappedNumber;
+                      sessionState.nextSpeakerNumber += 1;
+                    } else {
+                      // If more than two distinct AWS IDs appear, assign them to Speaker 1 by default
+                      mappedNumber = 1;
+                      sessionState.speakerIdMap[mostCommonSpeaker] = mappedNumber;
+                    }
+                  }
+
+                  speaker = `Speaker ${mappedNumber}`;
+
                   // Calculate average confidence
                   speakerConfidence =
                     confidenceScores.reduce((a, b) => a + b, 0) /
