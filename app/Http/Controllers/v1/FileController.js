@@ -66,7 +66,7 @@ o.uploadFile = async (req, res, next) => {
 
     // Populate references
     await newFile.populate([
-      { path: "case", select: "displayName internalRef" },
+      { path: "case", select: "displayName " },
       { path: "uploadedBy", select: "-password" },
     ]);
 
@@ -148,7 +148,7 @@ o.getFilesByCase = async (req, res, next) => {
     if (mimeType) filter.mimeType = { $regex: mimeType, $options: "i" };
 
     const files = await File.find(filter)
-      .populate("case", "displayName internalRef")
+      .populate("case", "displayName ")
       .populate("uploadedBy", "-password")
       .sort({ uploaded_at: -1 });
 
@@ -178,7 +178,7 @@ o.getFileById = async (req, res, next) => {
     const { id } = req.params;
 
     const file = await File.findById(id)
-      .populate("case", "displayName internalRef assignedTo")
+      .populate("case", "displayName  assignedTo")
       .populate("uploadedBy", "-password");
 
     if (!file) {

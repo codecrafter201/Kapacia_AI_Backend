@@ -82,7 +82,7 @@ const createSoapNoteRecord = async ({
     {
       path: "session",
       select: "sessionNumber sessionDate case",
-      populate: { path: "case", select: "displayName internalRef" },
+      populate: { path: "case", select: "displayName" },
     },
   ]);
 
@@ -216,7 +216,7 @@ o.generateSoapNoteFromTranscript = async (req, res, next) => {
       framework,
       temperature: temperature !== undefined ? temperature : 0.2,
       maxTokens: maxTokens !== undefined ? maxTokens : 1200,
-      caseName: caseData?.displayName || caseData?.internalRef,
+      caseName: caseData?.displayName || "Unknown Case",
       sessionDate: session.sessionDate,
       language: session.language || "english",
     });
@@ -327,7 +327,7 @@ o.updateSoapNote = async (req, res, next) => {
       {
         path: "session",
         select: "sessionNumber sessionDate case",
-        populate: { path: "case", select: "displayName internalRef" },
+        populate: { path: "case", select: "displayName" },
       },
       { path: "approvedBy", select: "-password" },
     ]);
@@ -426,7 +426,7 @@ o.approveSoapNote = async (req, res, next) => {
       {
         path: "session",
         select: "sessionNumber sessionDate case",
-        populate: { path: "case", select: "displayName internalRef" },
+        populate: { path: "case", select: "displayName" },
       },
       { path: "approvedBy", select: "-password" },
     ]);
@@ -499,7 +499,7 @@ o.getSoapNotesBySession = async (req, res, next) => {
         {
           path: "session",
           select: "sessionNumber sessionDate case",
-          populate: { path: "case", select: "displayName internalRef" },
+          populate: { path: "case", select: "displayName" },
         },
         { path: "approvedBy", select: "-password" },
       ])
@@ -537,7 +537,7 @@ o.getSoapNoteById = async (req, res, next) => {
       {
         path: "session",
         select: "sessionNumber sessionDate case",
-        populate: { path: "case", select: "displayName internalRef" },
+        populate: { path: "case", select: "displayName" },
       },
       { path: "approvedBy", select: "-password" },
     ]);

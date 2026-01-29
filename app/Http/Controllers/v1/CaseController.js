@@ -282,12 +282,12 @@ o.createCase = async (req, res, next) => {
     }
 
     // Generate internal reference (CASE-YYYY-XXX format)
-    const internalRef = await generateInternalRef();
+    // const internalRef = await generateInternalRef();
 
     // Create the case
     const newCase = new Case({
       displayName,
-      internalRef,
+      // internalRef,
       assignedTo,
       createdBy: adminId,
       tags: tags || [],
@@ -306,7 +306,7 @@ o.createCase = async (req, res, next) => {
       caseId: newCase._id,
       details: {
         displayName: newCase.displayName,
-        internalRef: newCase.internalRef,
+        // internalRef: newCase.internalRef,
         assignedTo: assignedUser.email,
       },
       req,
@@ -345,11 +345,11 @@ o.createCaseSelf = async (req, res, next) => {
       return json.errorResponse(res, "displayName is required", 400);
     }
 
-    const internalRef = await generateInternalRef();
+    // const internalRef = await generateInternalRef();
 
     const newCase = new Case({
       displayName,
-      internalRef,
+      // internalRef,
       assignedTo: userId,
       createdBy: userId,
       tags: tags || [],
@@ -368,7 +368,7 @@ o.createCaseSelf = async (req, res, next) => {
       caseId: newCase._id,
       details: {
         displayName: newCase.displayName,
-        internalRef: newCase.internalRef,
+        // internalRef: newCase.internalRef,
       },
       req,
     });
@@ -484,7 +484,7 @@ o.getMyCases = async (req, res, next) => {
     if (search) {
       filter.$or = [
         { displayName: { $regex: search, $options: "i" } },
-        { internalRef: { $regex: search, $options: "i" } },
+        // { internalRef: { $regex: search, $options: "i" } },
       ];
     }
 
@@ -671,7 +671,7 @@ o.deleteCase = async (req, res, next) => {
       caseId: req.params.id,
       details: {
         displayName: caseData.displayName,
-        internalRef: caseData.internalRef,
+        // internalRef: caseData.internalRef,
         deletedAt: new Date(),
       },
       req,

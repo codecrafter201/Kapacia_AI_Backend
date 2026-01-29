@@ -49,8 +49,15 @@ o.getCaseTimeline = async (req, res, next) => {
   try {
     const { _id: userId } = req.decoded;
     const { caseId } = req.params;
-    const { eventType, sessionStatus, startDate, endDate, allEntries, page, limit } =
-      req.query;
+    const {
+      eventType,
+      sessionStatus,
+      startDate,
+      endDate,
+      allEntries,
+      page,
+      limit,
+    } = req.query;
 
     // Verify the case exists and user has access to it
     const caseData = await Case.findById(caseId);
@@ -146,7 +153,7 @@ o.getCaseTimeline = async (req, res, next) => {
 
     // Build query
     let query = CaseTimeline.find(filter)
-      .populate("case", "displayName internalRef")
+      .populate("case", "displayName")
       .populate("performedBy", "-password")
       .populate({
         path: "session",

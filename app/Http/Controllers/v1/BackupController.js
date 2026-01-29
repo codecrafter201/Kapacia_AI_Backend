@@ -29,20 +29,20 @@ o.backupAllData = async (req, res, next) => {
       mongoose
         .model("Session")
         .find()
-        .populate("caseId", "displayName internalRef")
+        .populate("caseId", "displayName")
         .populate("userId", "name email")
         .lean(),
       mongoose
         .model("File")
         .find()
-        .populate("caseId", "displayName internalRef")
+        .populate("caseId", "displayName")
         .populate("uploadedBy", "name email")
         .lean(),
       mongoose
         .model("Soap")
         .find()
         .populate("sessionId", "sessionNumber")
-        .populate("caseId", "displayName internalRef")
+        .populate("caseId", "displayName")
         .lean(),
       mongoose
         .model("Transcript")
@@ -52,13 +52,13 @@ o.backupAllData = async (req, res, next) => {
       mongoose
         .model("TimelineSummary")
         .find()
-        .populate("caseId", "displayName internalRef")
+        .populate("caseId", "displayName")
         .populate("createdBy", "name email")
         .lean(),
       mongoose
         .model("CaseTimeline")
         .find()
-        .populate("caseId", "displayName internalRef")
+        .populate("caseId", "displayName")
         .lean(),
       mongoose
         .model("AuditLog")
