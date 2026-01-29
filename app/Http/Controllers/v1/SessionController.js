@@ -76,7 +76,7 @@ o.createSession = async (req, res, next) => {
 
     // Populate case details
     await newSession.populate([
-      { path: "case", select: "displayName internalRef status" },
+      { path: "case", select: "displayName status" },
       { path: "createdBy", select: "-password" },
     ]);
 
@@ -178,7 +178,7 @@ o.updateSession = async (req, res, next) => {
 
     await session.save();
     await session.populate([
-      { path: "case", select: "displayName internalRef status" },
+      { path: "case", select: "displayName status" },
       { path: "createdBy", select: "-password" },
     ]);
 
@@ -258,7 +258,7 @@ o.startRecording = async (req, res, next) => {
     await session.save();
 
     await session.populate([
-      { path: "case", select: "displayName internalRef status" },
+      { path: "case", select: "displayName status" },
       { path: "createdBy", select: "-password" },
     ]);
 
@@ -342,7 +342,7 @@ o.stopRecording = async (req, res, next) => {
     });
 
     await session.populate([
-      { path: "case", select: "displayName internalRef status" },
+      { path: "case", select: "displayName status" },
       { path: "createdBy", select: "-password" },
     ]);
 
@@ -406,7 +406,7 @@ o.getSessionsByCase = async (req, res, next) => {
     if (language) filter.language = language;
 
     const sessions = await Session.find(filter)
-      .populate("case", "displayName internalRef status")
+      .populate("case", "displayName status")
       .populate("createdBy", "-password")
       .sort({ sessionNumber: -1 });
 
@@ -440,7 +440,7 @@ o.getRecentSessions = async (req, res, next) => {
 
     // Find cases assigned to this user
     const cases = await Case.find({ assignedTo: userId }).select(
-      "_id displayName internalRef status",
+      "_id displayName status",
     );
     const caseIds = cases.map((c) => c._id);
 
@@ -459,7 +459,7 @@ o.getRecentSessions = async (req, res, next) => {
     const safeLimit = Math.min(parseInt(limit) || 5, 20);
 
     const sessions = await Session.find({ case: { $in: caseIds } })
-      .populate("case", "displayName internalRef status")
+      .populate("case", "displayName status")
       .populate("createdBy", "name email role")
       .sort({ sessionDate: -1, createdAt: -1 })
       .limit(safeLimit);
@@ -487,7 +487,7 @@ o.getSessionById = async (req, res, next) => {
     const { id } = req.params;
 
     const session = await Session.findById(id)
-      .populate("case", "displayName internalRef status tags assignedTo")
+      .populate("case", "displayName status tags assignedTo")
       .populate("createdBy", "-password");
 
     if (!session) {
@@ -668,7 +668,7 @@ o.uploadRecording = async (req, res, next) => {
       });
 
       await session.populate([
-        { path: "case", select: "displayName internalRef status" },
+        { path: "case", select: "displayName status" },
         { path: "createdBy", select: "-password" },
       ]);
 
@@ -725,7 +725,7 @@ o.getPresignedAudioUrl = async (req, res, next) => {
 
     const session = await Session.findById(id).populate(
       "case",
-      "assignedTo displayName internalRef",
+      "assignedTo displayName",
     );
     if (!session) {
       console.error(`[getPresignedAudioUrl] Session not found: ${id}`);
@@ -795,7 +795,9 @@ o.getPresignedAudioUrl = async (req, res, next) => {
       );
     }
 
-    console.log(`[getPresignedAudioUrl] Generating presigned URL for key: ${key}`);
+    console.log(
+      `[getPresignedAudioUrl] Generating presigned URL for key: ${key}`,
+    );
     console.log(
       `[getPresignedAudioUrl] S3 Bucket: ${process.env.AWS_S3_BUCKET_NAME}`,
     );
@@ -807,11 +809,13 @@ o.getPresignedAudioUrl = async (req, res, next) => {
     console.log(
       `[getPresignedAudioUrl] Generating presigned URL (expires in ${expiresIn}s)`,
     );
-    
+
     try {
       const signedUrl = await s3Service.getPresignedUrl(key, expiresIn);
 
-      console.log(`[getPresignedAudioUrl] Presigned URL generated successfully`);
+      console.log(
+        `[getPresignedAudioUrl] Presigned URL generated successfully`,
+      );
 
       return json.successResponse(
         res,
@@ -830,25 +834,28 @@ o.getPresignedAudioUrl = async (req, res, next) => {
         200,
       );
     } catch (s3Error) {
-      console.error(`[getPresignedAudioUrl] S3 service error:`, s3Error.message);
-      
+      console.error(
+        `[getPresignedAudioUrl] S3 service error:`,
+        s3Error.message,
+      );
+
       // Return specific error messages to help with debugging
-      if (s3Error.message.includes('not found')) {
+      if (s3Error.message.includes("not found")) {
         return json.errorResponse(
           res,
           "Audio file not found in storage. The recording may have been deleted or failed to upload.",
           404,
         );
       }
-      
-      if (s3Error.message.includes('Access Denied')) {
+
+      if (s3Error.message.includes("Access Denied")) {
         return json.errorResponse(
           res,
           "Storage access denied. Please contact system administrator.",
           403,
         );
       }
-      
+
       return json.errorResponse(
         res,
         `Unable to access audio file: ${s3Error.message}`,
@@ -881,7 +888,7 @@ o.getAllSessions = async (req, res, next) => {
 
     // Get paginated sessions
     const sessions = await Session.find()
-      .populate("case", "displayName internalRef status")
+      .populate("case", "displayName status")
       .populate("createdBy", "name email role")
       .sort({ sessionDate: -1, createdAt: -1 })
       .skip(skip)

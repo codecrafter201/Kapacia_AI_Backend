@@ -102,7 +102,7 @@ o.createTimelineSummary = async (req, res, next) => {
 
     // Populate references
     await timelineSummary.populate([
-      { path: "case", select: "displayName internalRef" },
+      { path: "case", select: "displayName" },
       { path: "generatedBy", select: "-password" },
       { path: "sessionsIncluded", select: "sessionNumber sessionDate" },
       { path: "filesIncluded", select: "fileName fileUrl" },
@@ -180,7 +180,7 @@ o.getTimelineSummariesByCase = async (req, res, next) => {
     if (status) filter.status = status;
 
     const summaries = await TimelineSummary.find(filter)
-      .populate("case", "displayName internalRef")
+      .populate("case", "displayName")
       .populate("generatedBy", "-password")
       .populate("approvedBy", "-password")
       .sort({ version: -1 });
@@ -213,7 +213,7 @@ o.getTimelineSummaryById = async (req, res, next) => {
     const { id } = req.params;
 
     const summary = await TimelineSummary.findById(id)
-      .populate("case", "displayName internalRef assignedTo")
+      .populate("case", "displayName assignedTo")
       .populate("generatedBy", "-password")
       .populate("approvedBy", "-password")
       .populate("sessionsIncluded", "sessionNumber sessionDate status")
@@ -294,7 +294,7 @@ o.updateTimelineSummary = async (req, res, next) => {
 
     await summary.save();
     await summary.populate([
-      { path: "case", select: "displayName internalRef" },
+      { path: "case", select: "displayName" },
       { path: "generatedBy", select: "-password" },
       { path: "approvedBy", select: "-password" },
     ]);
@@ -361,7 +361,7 @@ o.approveTimelineSummary = async (req, res, next) => {
 
     await summary.save();
     await summary.populate([
-      { path: "case", select: "displayName internalRef" },
+      { path: "case", select: "displayName" },
       { path: "generatedBy", select: "-password" },
       { path: "approvedBy", select: "-password" },
     ]);
@@ -742,7 +742,7 @@ o.generateTimelineSummaryWithAI = async (req, res, next) => {
 
     // Populate references
     await timelineSummary.populate([
-      { path: "case", select: "displayName internalRef" },
+      { path: "case", select: "displayName" },
       { path: "generatedBy", select: "-password" },
       { path: "sessionsIncluded", select: "sessionNumber sessionDate" },
       { path: "filesIncluded", select: "fileName fileUrl" },
