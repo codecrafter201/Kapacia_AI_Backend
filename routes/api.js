@@ -224,11 +224,7 @@ app.group("/transcript", (Route) => {
 
 app.group("/audit-logs", (Route) => {
   Route.get("/", authCtrl.authenticate, auditLogCtrl.getAllAuditLogs);
-  Route.get(
-    "/export",
-    authCtrl.authenticateAdmin,
-    auditLogCtrl.exportAuditLogs,
-  );
+  Route.get("/export", authCtrl.authenticate, auditLogCtrl.exportAuditLogs);
   Route.get(
     "/case/:caseId",
     authCtrl.authenticateAdmin,
